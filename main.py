@@ -1,6 +1,18 @@
 from datetime import datetime
 from urllib.parse import quote
 import requests
+import logging
+import os
+
+# Set up logging to write to 'console.log' in the same folder as the script
+script_dir = os.path.dirname(os.path.abspath(__file__))
+log_file = os.path.join(script_dir, 'console.log')
+logging.basicConfig(
+    filename=log_file,
+    filemode='w',  # Overwrite the log file each time the script runs
+    level=logging.INFO,
+    format='%(asctime)s %(levelname)s: %(message)s'
+)
 
 # Load configurations from config.txt
 def load_config(file_path='config.txt'):
@@ -19,14 +31,13 @@ PRIORITY_API_URL = config.get('PRIORITY_API_URL')
 PRIORITY_API_USER = config.get('PRIORITY_API_USER')
 PRIORITY_API_PASSWORD = config.get('PRIORITY_API_PASSWORD')
 ATERA_API_KEY = config.get('ATERA_API_KEY')
+
 # Sync flags
-
-# convert to bool from string
+# Convert to bool from string
 SYNC_CUSTOMERS = bool(int(config.get('SYNC_CUSTOMERS', 0)))
-SYNC_CONTACTS = bool(int(config.get('SYNC_CONTACTS', False)))
-SYNC_CONTRACTS = bool(int(config.get('SYNC_CONTRACTS', False)))
-SYNC_SERVICE_CALLS = bool(int(config.get('SYNC_SERVICE_CALLS', False)))
-
+SYNC_CONTACTS = bool(int(config.get('SYNC_CONTACTS', 0)))
+SYNC_CONTRACTS = bool(int(config.get('SYNC_CONTRACTS', 0)))
+SYNC_SERVICE_CALLS = bool(int(config.get('SYNC_SERVICE_CALLS', 0)))
 
 # ------------------- SYNC CUSTOMERS -------------------
 def get_priority_customers():
@@ -35,7 +46,7 @@ def get_priority_customers():
     url = f"{PRIORITY_API_URL}/CUSTOMERS?$select={select_fields}"
     response = requests.get(url, auth=(PRIORITY_API_USER, PRIORITY_API_PASSWORD))
     if response.status_code != 200:
-        print(f"Error {response.status_code}: {response.text}")
+        logging.error(f"Error {response.status_code}: {response.text}")
     response.raise_for_status()
     return response.json()['value']
 
@@ -50,11 +61,11 @@ def get_atera_customers():
     items_in_page = 50  # Max items per page is 50
 
     while True:
-        print(f"Fetching customers from Atera, page {page}...")
+        logging.info(f"Fetching customers from Atera, page {page}...")
         params = {'page': page, 'itemsInPage': items_in_page}
         response = requests.get(url, headers=headers, params=params)
         if response.status_code != 200:
-            print(f"Error {response.status_code}: {response.text}")
+            logging.error(f"Error {response.status_code}: {response.text}")
             response.raise_for_status()
         data = response.json()
         items = data.get('items', [])
@@ -64,16 +75,14 @@ def get_atera_customers():
         page += 1
 
     # Now fetch the 'Priority Customer Number' custom field for each customer
-    # show progress of fetching custom fields
     for i, customer in enumerate(customers):
-        print(f"Fetching custom field for customer {i + 1}/{len(customers)}...")
+        logging.info(f"Fetching custom field for customer {i + 1}/{len(customers)}...")
         customer_id = customer['CustomerID']
         custom_field_name = 'Priority Customer Number'
         custom_field_value = get_atera_custom_field(customer_id, custom_field_name)
         customer['PriorityCustomerNumber'] = custom_field_value
 
     return customers
-
 
 def get_atera_custom_field(customer_id, field_name):
     """Fetch the value of a custom field for a specific customer."""
@@ -84,15 +93,14 @@ def get_atera_custom_field(customer_id, field_name):
     }
     response = requests.get(url, headers=headers)
     if response.status_code == 200:
-        return response.json()[0]['ValueAsString']  # The response is a JSON string with quotes
+        return response.json()[0]['ValueAsString']
     elif response.status_code == 404:
         # Field not found for this customer
         return None
     else:
-        print(
+        logging.error(
             f"Error fetching custom field '{field_name}' for customer ID {customer_id}: {response.status_code} - {response.text}")
         return None
-
 
 def create_atera_customer(customer):
     """Create a customer in Atera, and then update the 'Priority Customer Number' custom field."""
@@ -121,7 +129,7 @@ def create_atera_customer(customer):
 
     response = requests.post(url, headers=headers, json=data)
     if response.status_code not in [200, 201]:
-        print(f"Error {response.status_code}: {response.text}")
+        logging.error(f"Error {response.status_code}: {response.text}")
         response.raise_for_status()
 
     customer_id = response.json()['ActionID']
@@ -130,7 +138,6 @@ def create_atera_customer(customer):
     update_atera_custom_field(customer_id, 'Priority Customer Number', customer['CUSTNAME'])
 
     return response.json()
-
 
 def update_atera_customer(customer_id, customer):
     """Update an existing customer in Atera."""
@@ -159,14 +166,13 @@ def update_atera_customer(customer_id, customer):
 
     response = requests.put(url, headers=headers, json=data)
     if response.status_code not in [200, 201]:
-        print(f"Error updating customer ID {customer_id}: {response.status_code} - {response.text}")
+        logging.error(f"Error updating customer ID {customer_id}: {response.status_code} - {response.text}")
         response.raise_for_status()
 
     # Update the 'Priority Customer Number' custom field in case it changed
     update_atera_custom_field(customer_id, 'Priority Customer Number', customer['CUSTNAME'])
 
     return response.json()
-
 
 def update_atera_custom_field(customer_id, field_name, value):
     """Update a custom field for a customer in Atera."""
@@ -179,10 +185,9 @@ def update_atera_custom_field(customer_id, field_name, value):
     data = {"Value": value}
     response = requests.put(url, headers=headers, json=data)
     if response.status_code not in [200, 201]:
-        print(
+        logging.error(
             f"Error updating custom field '{field_name}' for customer ID {customer_id}: {response.status_code} - {response.text}")
         response.raise_for_status()
-
 
 def sync_customers():
     """Sync customers from Priority to Atera, performing upsert based on IDs and names."""
@@ -206,34 +211,33 @@ def sync_customers():
         if customer_name:
             atera_customer_name_map[customer_name] = customer['CustomerID']
 
-    print(f"Atera customers by ID: {atera_customer_id_map}")
+    logging.info(f"Atera customers by ID: {atera_customer_id_map}")
 
     for customer in priority_customers:
         priority_customer_number = customer['CUSTNAME']
         priority_customer_name = customer.get('CUSTDES', '').strip().lower()
 
-        print(f"Processing Priority customer: CUSTNAME={priority_customer_number}, CUSTDES={priority_customer_name}")
+        logging.info(f"Processing Priority customer: CUSTNAME={priority_customer_number}, CUSTDES={priority_customer_name}")
 
         # Try to find the customer in Atera by Priority Customer Number (ID)
         customer_id = atera_customer_id_map.get(priority_customer_number)
 
         if customer_id:
             # Customer exists in both systems by ID, perform an update
-            print(f"Found matching customer in Atera by ID. Updating customer '{customer['CUSTDES']}' in Atera (ID: {customer_id}) by ID.")
+            logging.info(f"Found matching customer in Atera by ID. Updating customer '{customer['CUSTDES']}' in Atera (ID: {customer_id}) by ID.")
             update_atera_customer(customer_id, customer)
         else:
             # Try to find the customer in Atera by name
             customer_id = atera_customer_name_map.get(priority_customer_name)
             if customer_id:
                 # Customer exists in Atera by name, perform an update and set the Priority Customer Number
-                print(f"Found matching customer in Atera by name. Updating customer '{customer['CUSTDES']}' in Atera (ID: {customer_id}) by name.")
+                logging.info(f"Found matching customer in Atera by name. Updating customer '{customer['CUSTDES']}' in Atera (ID: {customer_id}) by name.")
                 update_atera_customer(customer_id, customer)
             else:
                 # Customer does not exist in Atera, create it
-                print(f"No matching customer found in Atera. Creating customer '{customer['CUSTDES']}' in Atera.")
+                logging.info(f"No matching customer found in Atera. Creating customer '{customer['CUSTDES']}' in Atera.")
                 result = create_atera_customer(customer)
-                print(f"Customer '{customer['CUSTDES']}' created in Atera with ID {result['ActionID']}.")
-
+                logging.info(f"Customer '{customer['CUSTDES']}' created in Atera with ID {result['ActionID']}.")
 
 # ------------------- SYNC CONTACTS -------------------
 def get_priority_contacts():
@@ -242,10 +246,9 @@ def get_priority_contacts():
     url = f"{PRIORITY_API_URL}/PHONEBOOK?$select={select_fields}"
     response = requests.get(url, auth=(PRIORITY_API_USER, PRIORITY_API_PASSWORD))
     if response.status_code != 200:
-        print(f"Error {response.status_code}: {response.text}")
+        logging.error(f"Error {response.status_code}: {response.text}")
     response.raise_for_status()
     return response.json()['value']
-
 
 def get_atera_contacts():
     """Fetch all contacts from Atera, handling pagination."""
@@ -259,7 +262,7 @@ def get_atera_contacts():
         }
         response = requests.get(url, headers=headers)
         if response.status_code != 200:
-            print(f"Error fetching contacts from Atera: {response.status_code} - {response.text}")
+            logging.error(f"Error fetching contacts from Atera: {response.status_code} - {response.text}")
             response.raise_for_status()
         data = response.json()
         contacts.extend(data['items'])
@@ -267,7 +270,6 @@ def get_atera_contacts():
             break
         page += 1
     return contacts
-
 
 def sync_contacts():
     """Sync contacts from Priority to Atera, performing upsert based on contact name."""
@@ -299,7 +301,7 @@ def sync_contacts():
             customer_id = atera_customer_map.get(priority_customer_number)
 
             if not customer_id:
-                print(
+                logging.info(
                     f"No matching customer in Atera for CUSTNAME '{priority_customer_number}'. Skipping contact '{contact.get('FIRSTNAME', '')} {contact.get('LASTNAME', '')}'.")
                 continue
 
@@ -312,14 +314,14 @@ def sync_contacts():
 
             # If both names are missing, skip the contact
             if not first_name and not last_name:
-                print(f"Contact with missing name fields. Skipping contact with email '{contact.get('EMAIL', '')}'.")
+                logging.info(f"Contact with missing name fields. Skipping contact with email '{contact.get('EMAIL', '')}'.")
                 continue
 
             full_name = f"{first_name} {last_name}".strip()
             key = (customer_id, full_name.lower())
             existing_contact = atera_contact_map.get(key)
 
-            # contact.get('EMAIL', '') may be null
+            # Handle potential null email
             email = contact.get('EMAIL', '')
             if email:
                 email = email.strip().lower()
@@ -327,7 +329,7 @@ def sync_contacts():
                 # Generate unique email using contact name and customer ID
                 sanitized_name = (first_name + last_name).replace(' ', '').lower()
                 email = f"{sanitized_name}{customer_id}@example.com"
-                print(f"No email for contact '{full_name}'. Generated email: {email}")
+                logging.info(f"No email for contact '{full_name}'. Generated email: {email}")
 
             contact['FIRSTNAME'] = first_name
             contact['LASTNAME'] = last_name
@@ -336,17 +338,16 @@ def sync_contacts():
             if existing_contact:
                 # Update the contact in Atera
                 contact_id = existing_contact['EndUserID']
-                print(f"Updating contact '{full_name}' in Atera (ID: {contact_id}).")
+                logging.info(f"Updating contact '{full_name}' in Atera (ID: {contact_id}).")
                 update_atera_contact(contact_id, contact)
             else:
                 # Create the contact in Atera
-                print(f"Creating contact '{full_name}' in Atera.")
+                logging.info(f"Creating contact '{full_name}' in Atera.")
                 create_atera_contact(customer_id, contact)
 
         except Exception as e:
-            print(f"Error processing contact '{contact.get('FIRSTNAME', '')} {contact.get('LASTNAME', '')}': {e}")
+            logging.error(f"Error processing contact '{contact.get('FIRSTNAME', '')} {contact.get('LASTNAME', '')}': {e}")
             continue
-
 
 def create_atera_contact(customer_id, contact):
     """Create a contact in Atera."""
@@ -370,12 +371,11 @@ def create_atera_contact(customer_id, contact):
     }
     response = requests.post(url, headers=headers, json=data)
     if response.status_code not in [200, 201]:
-        print(
+        logging.error(
             f"Error creating contact '{contact['FIRSTNAME']} {contact['LASTNAME']}': {response.status_code} - {response.text}")
         response.raise_for_status()
     else:
-        print(f"Contact '{contact['FIRSTNAME']} {contact['LASTNAME']}' created in Atera.")
-
+        logging.info(f"Contact '{contact['FIRSTNAME']} {contact['LASTNAME']}' created in Atera.")
 
 def update_atera_contact(contact_id, contact):
     """Update an existing contact in Atera."""
@@ -397,40 +397,37 @@ def update_atera_contact(contact_id, contact):
     }
     response = requests.post(url, headers=headers, json=data)
     if response.status_code not in [200, 201]:
-        print(f"Error updating contact ID {contact_id}: {response.status_code} - {response.text}")
+        logging.error(f"Error updating contact ID {contact_id}: {response.status_code} - {response.text}")
         response.raise_for_status()
     else:
-        print(f"Contact ID {contact_id} updated in Atera.")
-
+        logging.info(f"Contact ID {contact_id} updated in Atera.")
 
 # ------------------- MAIN FUNCTION -------------------
-
 def main():
     """Main function to run selected syncs based on config flags."""
     if SYNC_CUSTOMERS:
-        print("Syncing customers from Priority to Atera...")
+        logging.info("Syncing customers from Priority to Atera...")
         sync_customers()
     else:
-        print("Customer sync disabled in config.")
+        logging.info("Customer sync disabled in config.")
 
     if SYNC_CONTACTS:
-        print("Syncing contacts from Priority to Atera...")
+        logging.info("Syncing contacts from Priority to Atera...")
         sync_contacts()
     else:
-        print("Contact sync disabled in config.")
+        logging.info("Contact sync disabled in config.")
 
     if SYNC_CONTRACTS:
-        print("Syncing contracts from Priority to Atera...")
+        logging.info("Syncing contracts from Priority to Atera...")
         # sync_contracts()
     else:
-        print("Contract sync disabled in config.")
+        logging.info("Contract sync disabled in config.")
 
     if SYNC_SERVICE_CALLS:
-        print("Syncing service calls from Atera to Priority as invoices...")
+        logging.info("Syncing service calls from Atera to Priority as invoices...")
         # sync_service_calls()
     else:
-        print("Service call sync disabled in config.")
-
+        logging.info("Service call sync disabled in config.")
 
 if __name__ == "__main__":
     main()

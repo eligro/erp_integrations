@@ -1,15 +1,10 @@
 # test_sync_module.py
 
 import pytest
-from unittest import mock
-from unittest.mock import patch, MagicMock
 from main import sync_customers, sync_contacts
 
 # Test for syncing customers
-@patch('main.requests.put')
-@patch('main.requests.post')
-@patch('main.requests.get')
-def test_sync_customers_update(mock_get, mock_post, mock_put):
+def test_sync_customers_update(mocker):
     # Define test data
     priority_customer = {
         'value': [
@@ -36,26 +31,29 @@ def test_sync_customers_update(mock_get, mock_post, mock_put):
 
     # Mock responses for requests.get
     def mock_get_side_effect(url, *args, **kwargs):
-        if 'CUSTOMERS' in url and 'PRIORITY_API_URL' in url:
-            response = MagicMock()
+        if 'CUSTOMERS' in url:  # Adjusted to handle any URL containing 'CUSTOMERS'
+            response = mocker.MagicMock()
             response.status_code = 200
             response.json.return_value = priority_customer
             return response
         elif url == "https://app.atera.com/api/v3/customers":
-            response = MagicMock()
+            response = mocker.MagicMock()
             response.status_code = 200
             response.json.return_value = atera_customer
             return response
         elif url.startswith("https://app.atera.com/api/v3/customvalues/customerfield/"):
-            response = MagicMock()
+            response = mocker.MagicMock()
             response.status_code = 404  # Custom field not found
             return response
         else:
             raise ValueError(f"Unhandled URL: {url}")
 
-    mock_get.side_effect = mock_get_side_effect
-    mock_put.return_value = MagicMock(status_code=200)
-    mock_post.return_value = MagicMock(status_code=200, json=lambda: {'ActionID': 1})
+    # Apply the side effect to the patched get requests
+    mocker.patch('main.requests.get', side_effect=mock_get_side_effect)
+    mock_put = mocker.patch('main.requests.put')
+    mock_post = mocker.patch('main.requests.post')
+    mock_put.return_value = mocker.MagicMock(status_code=200)
+    mock_post.return_value = mocker.MagicMock(status_code=200, json=lambda: {'ActionID': 1})
 
     # Run initial sync
     sync_customers()
@@ -64,7 +62,7 @@ def test_sync_customers_update(mock_get, mock_post, mock_put):
     expected_put_url = "https://app.atera.com/api/v3/customers/1"
     mock_put.assert_any_call(
         expected_put_url,
-        headers=mock.ANY,
+        headers=mocker.ANY,
         json={
             "CustomerName": "Customer One",
             "BusinessNumber": "",
@@ -87,7 +85,7 @@ def test_sync_customers_update(mock_get, mock_post, mock_put):
     expected_custom_field_url = "https://app.atera.com/api/v3/customvalues/customerfield/1/Priority%20Customer%20Number"
     mock_put.assert_any_call(
         expected_custom_field_url,
-        headers=mock.ANY,
+        headers=mocker.ANY,
         json={"Value": "CUST001"}
     )
 
@@ -107,8 +105,8 @@ def test_sync_customers_update(mock_get, mock_post, mock_put):
 
     # Update mock responses for the modified data
     def mock_get_side_effect_updated(url, *args, **kwargs):
-        if 'CUSTOMERS' in url and 'PRIORITY_API_URL' in url:
-            response = MagicMock()
+        if 'CUSTOMERS' in url:
+            response = mocker.MagicMock()
             response.status_code = 200
             response.json.return_value = priority_customer_updated
             return response
@@ -122,19 +120,19 @@ def test_sync_customers_update(mock_get, mock_post, mock_put):
                     }
                 ]
             }
-            response = MagicMock()
+            response = mocker.MagicMock()
             response.status_code = 200
             response.json.return_value = updated_atera_customer
             return response
         elif url.startswith("https://app.atera.com/api/v3/customvalues/customerfield/"):
-            response = MagicMock()
+            response = mocker.MagicMock()
             response.status_code = 200
             response.json.return_value = [{'ValueAsString': 'CUST001'}]
             return response
         else:
             raise ValueError(f"Unhandled URL: {url}")
 
-    mock_get.side_effect = mock_get_side_effect_updated
+    mocker.patch('main.requests.get', side_effect=mock_get_side_effect_updated)
 
     # Reset mocks
     mock_put.reset_mock()
@@ -146,7 +144,7 @@ def test_sync_customers_update(mock_get, mock_post, mock_put):
     # Verify that the customer was updated with new phone number
     mock_put.assert_any_call(
         expected_put_url,
-        headers=mock.ANY,
+        headers=mocker.ANY,
         json={
             "CustomerName": "Customer One",
             "BusinessNumber": "",
@@ -168,10 +166,7 @@ def test_sync_customers_update(mock_get, mock_post, mock_put):
     print("Customer sync test passed.")
 
 # Test for syncing contacts
-@patch('main.requests.put')
-@patch('main.requests.post')
-@patch('main.requests.get')
-def test_sync_contacts_create_partial(mock_get, mock_post, mock_put):
+def test_sync_contacts_create_partial(mocker):
     # Define test data
     priority_contacts = {
         'value': [
@@ -225,31 +220,33 @@ def test_sync_contacts_create_partial(mock_get, mock_post, mock_put):
     # Mock responses for requests.get
     def mock_get_side_effect(url, *args, **kwargs):
         if 'PHONEBOOK' in url:
-            response = MagicMock()
+            response = mocker.MagicMock()
             response.status_code = 200
             response.json.return_value = priority_contacts
             return response
         elif url.startswith("https://app.atera.com/api/v3/contacts"):
-            response = MagicMock()
+            response = mocker.MagicMock()
             response.status_code = 200
             response.json.return_value = atera_contacts
             return response
         elif url == "https://app.atera.com/api/v3/customers":
-            response = MagicMock()
+            response = mocker.MagicMock()
             response.status_code = 200
             response.json.return_value = atera_customers
             return response
         elif url.startswith("https://app.atera.com/api/v3/customvalues/customerfield/"):
             # Return a response indicating that the custom field is not found
-            response = MagicMock()
+            response = mocker.MagicMock()
             response.status_code = 404
             return response
         else:
             raise ValueError(f"Unhandled URL: {url}")
 
-    mock_get.side_effect = mock_get_side_effect
-    mock_post.return_value = MagicMock(status_code=200, json=lambda: {'ActionID': 2})
-    mock_put.return_value = MagicMock(status_code=200)
+    mocker.patch('main.requests.get', side_effect=mock_get_side_effect)
+    mock_post = mocker.patch('main.requests.post')
+    mock_put = mocker.patch('main.requests.put')
+    mock_post.return_value = mocker.MagicMock(status_code=200, json=lambda: {'ActionID': 2})
+    mock_put.return_value = mocker.MagicMock(status_code=200)
 
     # Run sync
     sync_contacts()
@@ -257,18 +254,18 @@ def test_sync_contacts_create_partial(mock_get, mock_post, mock_put):
     # Verify that two contacts were created
     create_calls = [
         call for call in mock_post.call_args_list
-        if call[0][0] == "https://app.atera.com/api/v3/contacts"
+        if call.args[0] == "https://app.atera.com/api/v3/contacts"
     ]
     assert len(create_calls) == 2, "Expected 2 contacts to be created."
 
     # Check data for first contact (Alice)
-    data_alice = create_calls[0][1]['json']
+    data_alice = create_calls[0].kwargs['json']
     assert data_alice['Firstname'] == 'Alice'
     assert data_alice['Lastname'] == 'Alice'  # Last name missing, use first name
     assert data_alice['Email'] == 'alicealice1@example.com'  # Generated email
 
     # Check data for second contact (Smith)
-    data_smith = create_calls[1][1]['json']
+    data_smith = create_calls[1].kwargs['json']
     assert data_smith['Firstname'] == ''  # First name missing
     assert data_smith['Lastname'] == 'Smith'
     assert data_smith['Email'] == 'bob@example.com'  # Provided email

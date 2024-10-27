@@ -1,8 +1,6 @@
 from datetime import datetime
 from urllib.parse import quote
-
 import requests
-
 
 # Load configurations from config.txt
 def load_config(file_path='config.txt'):
@@ -14,7 +12,6 @@ def load_config(file_path='config.txt'):
                 key, value = line.split("=", 1)
                 config[key.strip()] = value.strip()
     return config
-
 
 # Fetch environment variables from config
 config = load_config()
@@ -39,7 +36,6 @@ def get_priority_customers():
         print(f"Error {response.status_code}: {response.text}")
     response.raise_for_status()
     return response.json()['value']
-
 
 def get_atera_customers():
     """Fetch existing customers from Atera and their 'Priority Customer Number' custom field."""
@@ -194,27 +190,30 @@ def sync_customers():
         if customer_name:
             atera_customer_name_map[customer_name] = customer['CustomerID']
 
+    print(f"Atera customers by ID: {atera_customer_id_map}")
     for customer in priority_customers:
         priority_customer_number = customer['CUSTNAME']
         priority_customer_name = customer.get('CUSTDES', '').strip().lower()
+
+        print(f"Processing Priority customer: CUSTNAME={priority_customer_number}, CUSTDES={priority_customer_name}")
 
         # Try to find the customer in Atera by Priority Customer Number (ID)
         customer_id = atera_customer_id_map.get(priority_customer_number)
 
         if customer_id:
             # Customer exists in both systems by ID, perform an update
-            print(f"Updating customer '{customer['CUSTDES']}' in Atera (ID: {customer_id}) by ID.")
+            print(f"Found matching customer in Atera by ID. Updating customer '{customer['CUSTDES']}' in Atera (ID: {customer_id}) by ID.")
             update_atera_customer(customer_id, customer)
         else:
             # Try to find the customer in Atera by name
             customer_id = atera_customer_name_map.get(priority_customer_name)
             if customer_id:
                 # Customer exists in Atera by name, perform an update and set the Priority Customer Number
-                print(f"Updating customer '{customer['CUSTDES']}' in Atera (ID: {customer_id}) by name.")
+                print(f"Found matching customer in Atera by name. Updating customer '{customer['CUSTDES']}' in Atera (ID: {customer_id}) by name.")
                 update_atera_customer(customer_id, customer)
             else:
                 # Customer does not exist in Atera, create it
-                print(f"Creating customer '{customer['CUSTDES']}' in Atera.")
+                print(f"No matching customer found in Atera. Creating customer '{customer['CUSTDES']}' in Atera.")
                 result = create_atera_customer(customer)
                 print(f"Customer '{customer['CUSTDES']}' created in Atera with ID {result['ActionID']}.")
 
@@ -380,6 +379,7 @@ def update_atera_contact(contact_id, contact):
 
 
 # ------------------- MAIN FUNCTION -------------------
+
 def main():
     """Main function to run selected syncs based on config flags."""
     if SYNC_CUSTOMERS:

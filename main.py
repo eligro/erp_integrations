@@ -48,6 +48,7 @@ def get_atera_customers():
     items_in_page = 50  # Max items per page is 50
 
     while True:
+        print(f"Fetching customers from Atera, page {page}...")
         params = {'page': page, 'itemsInPage': items_in_page}
         response = requests.get(url, headers=headers, params=params)
         if response.status_code != 200:
@@ -62,6 +63,7 @@ def get_atera_customers():
 
     # Now fetch the 'Priority Customer Number' custom field for each customer
     for customer in customers:
+        print(f"Fetching custom field for customer ID {customer['CustomerID']}...")
         customer_id = customer['CustomerID']
         custom_field_name = 'Priority Customer Number'
         custom_field_value = get_atera_custom_field(customer_id, custom_field_name)

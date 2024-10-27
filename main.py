@@ -38,16 +38,27 @@ def get_priority_customers():
     return response.json()['value']
 
 def get_atera_customers():
-    """Fetch existing customers from Atera and their 'Priority Customer Number' custom field."""
+    """Fetch all existing customers from Atera and their 'Priority Customer Number' custom field."""
     url = "https://app.atera.com/api/v3/customers"
     headers = {
         'X-Api-Key': ATERA_API_KEY
     }
-    response = requests.get(url, headers=headers)
-    if response.status_code != 200:
-        print(f"Error {response.status_code}: {response.text}")
-    response.raise_for_status()
-    customers = response.json()['items']
+    customers = []
+    page = 1
+    items_in_page = 50  # Max items per page is 50
+
+    while True:
+        params = {'page': page, 'itemsInPage': items_in_page}
+        response = requests.get(url, headers=headers, params=params)
+        if response.status_code != 200:
+            print(f"Error {response.status_code}: {response.text}")
+            response.raise_for_status()
+        data = response.json()
+        items = data.get('items', [])
+        if not items:
+            break
+        customers.extend(items)
+        page += 1
 
     # Now fetch the 'Priority Customer Number' custom field for each customer
     for customer in customers:
@@ -57,6 +68,7 @@ def get_atera_customers():
         customer['PriorityCustomerNumber'] = custom_field_value
 
     return customers
+
 
 
 def get_atera_custom_field(customer_id, field_name):
@@ -191,6 +203,7 @@ def sync_customers():
             atera_customer_name_map[customer_name] = customer['CustomerID']
 
     print(f"Atera customers by ID: {atera_customer_id_map}")
+
     for customer in priority_customers:
         priority_customer_number = customer['CUSTNAME']
         priority_customer_name = customer.get('CUSTDES', '').strip().lower()

@@ -20,10 +20,12 @@ PRIORITY_API_USER = config.get('PRIORITY_API_USER')
 PRIORITY_API_PASSWORD = config.get('PRIORITY_API_PASSWORD')
 ATERA_API_KEY = config.get('ATERA_API_KEY')
 # Sync flags
-SYNC_CUSTOMERS = config.get('SYNC_CUSTOMERS', False)
-SYNC_CONTACTS = config.get('SYNC_CONTACTS', False)
-SYNC_CONTRACTS = config.get('SYNC_CONTRACTS', False)
-SYNC_SERVICE_CALLS = config.get('SYNC_SERVICE_CALLS', False)
+
+# convert to bool from string
+SYNC_CUSTOMERS = bool(int(config.get('SYNC_CUSTOMERS', 0)))
+SYNC_CONTACTS = bool(int(config.get('SYNC_CONTACTS', False)))
+SYNC_CONTRACTS = bool(int(config.get('SYNC_CONTRACTS', False)))
+SYNC_SERVICE_CALLS = bool(int(config.get('SYNC_SERVICE_CALLS', False)))
 
 
 # ------------------- SYNC CUSTOMERS -------------------

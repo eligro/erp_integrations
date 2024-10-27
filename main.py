@@ -64,15 +64,15 @@ def get_atera_customers():
         page += 1
 
     # Now fetch the 'Priority Customer Number' custom field for each customer
-    for customer in customers:
-        print(f"Fetching custom field for customer ID {customer['CustomerID']}...")
+    # show progress of fetching custom fields
+    for i, customer in enumerate(customers):
+        print(f"Fetching custom field for customer {i + 1}/{len(customers)}...")
         customer_id = customer['CustomerID']
         custom_field_name = 'Priority Customer Number'
         custom_field_value = get_atera_custom_field(customer_id, custom_field_name)
         customer['PriorityCustomerNumber'] = custom_field_value
 
     return customers
-
 
 
 def get_atera_custom_field(customer_id, field_name):
@@ -294,50 +294,58 @@ def sync_contacts():
 
     # Now sync contacts
     for contact in priority_contacts:
-        priority_customer_number = contact['CUSTNAME']
-        customer_id = atera_customer_map.get(priority_customer_number)
+        try:
+            priority_customer_number = contact['CUSTNAME']
+            customer_id = atera_customer_map.get(priority_customer_number)
 
-        if not customer_id:
-            print(
-                f"No matching customer in Atera for CUSTNAME '{priority_customer_number}'. Skipping contact '{contact.get('FIRSTNAME', '')} {contact.get('LASTNAME', '')}'.")
+            if not customer_id:
+                print(
+                    f"No matching customer in Atera for CUSTNAME '{priority_customer_number}'. Skipping contact '{contact.get('FIRSTNAME', '')} {contact.get('LASTNAME', '')}'.")
+                continue
+
+            first_name = (contact.get('FIRSTNAME') or '').strip()
+            last_name = (contact.get('LASTNAME') or '').strip()
+
+            # If last name is missing, use first name as last name
+            if not last_name:
+                last_name = first_name
+
+            # If both names are missing, skip the contact
+            if not first_name and not last_name:
+                print(f"Contact with missing name fields. Skipping contact with email '{contact.get('EMAIL', '')}'.")
+                continue
+
+            full_name = f"{first_name} {last_name}".strip()
+            key = (customer_id, full_name.lower())
+            existing_contact = atera_contact_map.get(key)
+
+            # contact.get('EMAIL', '') may be null
+            email = contact.get('EMAIL', '')
+            if email:
+                email = email.strip().lower()
+            else:
+                # Generate unique email using contact name and customer ID
+                sanitized_name = (first_name + last_name).replace(' ', '').lower()
+                email = f"{sanitized_name}{customer_id}@example.com"
+                print(f"No email for contact '{full_name}'. Generated email: {email}")
+
+            contact['FIRSTNAME'] = first_name
+            contact['LASTNAME'] = last_name
+            contact['EMAIL'] = email
+
+            if existing_contact:
+                # Update the contact in Atera
+                contact_id = existing_contact['EndUserID']
+                print(f"Updating contact '{full_name}' in Atera (ID: {contact_id}).")
+                update_atera_contact(contact_id, contact)
+            else:
+                # Create the contact in Atera
+                print(f"Creating contact '{full_name}' in Atera.")
+                create_atera_contact(customer_id, contact)
+
+        except Exception as e:
+            print(f"Error processing contact '{contact.get('FIRSTNAME', '')} {contact.get('LASTNAME', '')}': {e}")
             continue
-
-        first_name = (contact.get('FIRSTNAME') or '').strip()
-        last_name = (contact.get('LASTNAME') or '').strip()
-
-        # If last name is missing, use first name as last name
-        if not last_name:
-            last_name = first_name
-
-        # If both names are missing, skip the contact
-        if not first_name and not last_name:
-            print(f"Contact with missing name fields. Skipping contact with email '{contact.get('EMAIL', '')}'.")
-            continue
-
-        full_name = f"{first_name} {last_name}".strip()
-        key = (customer_id, full_name.lower())
-        existing_contact = atera_contact_map.get(key)
-
-        email = contact.get('EMAIL', '').strip()
-        if not email:
-            # Generate unique email using contact name and customer ID
-            sanitized_name = (first_name + last_name).replace(' ', '').lower()
-            email = f"{sanitized_name}{customer_id}@example.com"
-            print(f"No email for contact '{full_name}'. Generated email: {email}")
-
-        contact['FIRSTNAME'] = first_name
-        contact['LASTNAME'] = last_name
-        contact['EMAIL'] = email
-
-        if existing_contact:
-            # Update the contact in Atera
-            contact_id = existing_contact['EndUserID']
-            print(f"Updating contact '{full_name}' in Atera (ID: {contact_id}).")
-            update_atera_contact(contact_id, contact)
-        else:
-            # Create the contact in Atera
-            print(f"Creating contact '{full_name}' in Atera.")
-            create_atera_contact(customer_id, contact)
 
 
 def create_atera_contact(customer_id, contact):

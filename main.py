@@ -4,6 +4,7 @@ import requests
 import logging
 import os
 import json  # For JSON formatting in logs
+import re    # For phone number sanitization
 
 # Set up logging to write to 'console.log' in the same folder as the script
 script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -56,6 +57,19 @@ SYNC_CUSTOMERS = bool(int(config.get('SYNC_CUSTOMERS', 0)))
 SYNC_CONTACTS = bool(int(config.get('SYNC_CONTACTS', 0)))
 SYNC_CONTRACTS = bool(int(config.get('SYNC_CONTRACTS', 0)))
 SYNC_SERVICE_CALLS = bool(int(config.get('SYNC_SERVICE_CALLS', 0)))
+
+# ------------------- PHONE NUMBER SANITIZATION -------------------
+def sanitize_phone_number(phone_number):
+    """Sanitize phone numbers to include only '+', '-', and digits."""
+    if not phone_number:
+        return None
+    # Keep only '+', '-', and digits
+    sanitized = re.sub(r'[^+\-\d]', '', phone_number)
+    # Check if there are any digits left
+    if re.search(r'\d', sanitized):
+        return sanitized
+    else:
+        return None
 
 # ------------------- SYNC CUSTOMERS -------------------
 def get_priority_customers():
@@ -353,6 +367,10 @@ def sync_contacts():
             contact['LASTNAME'] = last_name
             contact['EMAIL'] = email
 
+            # Sanitize phone numbers
+            contact['PHONENUM'] = sanitize_phone_number(contact.get('PHONENUM'))
+            contact['CELLPHONE'] = sanitize_phone_number(contact.get('CELLPHONE'))
+
             if existing_contact:
                 # Update the contact in Atera
                 contact_id = existing_contact['EndUserID']
@@ -387,11 +405,33 @@ def create_atera_contact(customer_id, contact):
         "InIgnoreMode": False,
         "CreatedOn": datetime.utcnow().isoformat() + "Z"
     }
+
     response = requests.post(url, headers=headers, json=data)
-    if response.status_code not in [200, 201]:
+    if response.status_code in [409] and "email already exists" in response.text.lower():
+        # Modify email by appending customer ID before '@' and retry
+        email_parts = contact['EMAIL'].split('@')
+        if len(email_parts) == 2:
+            new_email = f"{email_parts[0]}+{contact['CUSTNAME']}@{email_parts[1]}"
+            log_json("INFO", f"Email already exists. Retrying with modified email.", {"original_email": contact['EMAIL'], "new_email": new_email})
+            data['Email'] = new_email
+            response = requests.post(url, headers=headers, json=data)
+            if response.status_code not in [200, 201]:
+                # Log as ERROR and include full data sent
+                log_json("ERROR", f"Error creating contact with modified email", {"status_code": response.status_code, "response": response.text, "data": data})
+                response.raise_for_status()
+            else:
+                log_json("INFO", f"Contact created with modified email.", {"contact_data": data})
+        else:
+            # Email format is invalid
+            log_json("ERROR", f"Invalid email format for contact", {"contact": contact})
+            response.raise_for_status()
+    elif response.status_code not in [200, 201]:
         # Log as ERROR and include full data sent
         log_json("ERROR", f"Error creating contact", {"status_code": response.status_code, "response": response.text, "data": data})
         response.raise_for_status()
+    else:
+        # Contact created successfully
+        log_json("INFO", f"Contact created in Atera.", {"contact_data": data})
 
 def update_atera_contact(contact_id, contact):
     """Update an existing contact in Atera."""

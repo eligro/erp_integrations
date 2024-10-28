@@ -273,7 +273,7 @@ def sync_customers():
 # ------------------- SYNC CONTACTS -------------------
 def get_priority_contacts():
     """Fetch contacts from Priority with specific fields."""
-    select_fields = 'CUSTNAME,CUSTDES,EMAIL,FIRSTNAME,LASTNAME,POSITIONDES,PHONENUM,CELLPHONE'
+    select_fields = 'CUSTNAME,CUSTDES,EMAIL,NAME,FIRSTNAME,LASTNAME,POSITIONDES,PHONENUM,CELLPHONE'
     url = f"{PRIORITY_API_URL}/PHONEBOOK?$select={select_fields}"
     response = requests.get(url, auth=(PRIORITY_API_USER, PRIORITY_API_PASSWORD))
     if response.status_code != 200:
@@ -329,6 +329,9 @@ def sync_contacts():
     for contact in priority_contacts:
         try:
             priority_customer_number = contact['CUSTNAME']
+            if not priority_customer_number:
+                log_json("INFO", "Skipping contact with null CUSTNAME.", {"contact": contact})
+                continue
             customer_id = atera_customer_map.get(priority_customer_number)
 
             first_name = (contact.get('FIRSTNAME') or '').strip()
@@ -396,8 +399,8 @@ def create_atera_contact(customer_id, contact):
     data = {
         "Email": contact['EMAIL'],
         "CustomerID": customer_id,
-        "Firstname": contact['FIRSTNAME'],
-        "Lastname": contact['LASTNAME'],
+        "Firstname": contact['FIRSTNAME'] or contact['NAME'],
+        "Lastname": contact['LASTNAME'] or contact['NAME'],
         "JobTitle": contact.get('POSITIONDES', ''),
         "Phone": contact.get('PHONENUM', ''),
         "MobilePhone": contact.get('CELLPHONE', ''),
@@ -407,7 +410,7 @@ def create_atera_contact(customer_id, contact):
     }
 
     response = requests.post(url, headers=headers, json=data)
-    if response.status_code in [409] and "email already exists" in response.text.lower():
+    if response.status_code in [409]:
         # Modify email by appending customer ID before '@' and retry
         email_parts = contact['EMAIL'].split('@')
         if len(email_parts) == 2:
@@ -443,8 +446,8 @@ def update_atera_contact(contact_id, contact):
     }
     data = {
         "Email": contact['EMAIL'],
-        "Firstname": contact['FIRSTNAME'],
-        "Lastname": contact['LASTNAME'],
+        "Firstname": contact['FIRSTNAME'] or contact['NAME'],
+        "Lastname": contact['LASTNAME'] or contact['NAME'],
         "JobTitle": contact.get('POSITIONDES', ''),
         "Phone": contact.get('PHONENUM', ''),
         "MobilePhone": contact.get('CELLPHONE', ''),

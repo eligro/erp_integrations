@@ -3,6 +3,7 @@ from urllib.parse import quote
 import requests
 import logging
 import os
+import json  # Added import for JSON
 
 # Set up logging to write to 'console.log' in the same folder as the script
 script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -75,8 +76,9 @@ def get_atera_customers():
         page += 1
 
     # Now fetch the 'Priority Customer Number' custom field for each customer
-    for i, customer in enumerate(customers):
-        logging.info(f"Fetching custom field for customer {i + 1}/{len(customers)}...")
+    for i, customer in enumerate(customers, 1):
+        if i % 100 == 0:
+            logging.info(f"Fetching custom fields for customer {i}/{len(customers)}...")
         customer_id = customer['CustomerID']
         custom_field_name = 'Priority Customer Number'
         custom_field_value = get_atera_custom_field(customer_id, custom_field_name)
@@ -347,6 +349,7 @@ def sync_contacts():
 
         except Exception as e:
             logging.error(f"Error processing contact '{contact.get('FIRSTNAME', '')} {contact.get('LASTNAME', '')}': {e}")
+            logging.error(f"Error processing contact Contact data: {json.dumps(contact)}")
             continue
 
 def create_atera_contact(customer_id, contact):
@@ -373,9 +376,11 @@ def create_atera_contact(customer_id, contact):
     if response.status_code not in [200, 201]:
         logging.error(
             f"Error creating contact '{contact['FIRSTNAME']} {contact['LASTNAME']}': {response.status_code} - {response.text}")
+        logging.error(f"Error creating contact {response.text} Data sent: {json.dumps(data)}")
         response.raise_for_status()
     else:
         logging.info(f"Contact '{contact['FIRSTNAME']} {contact['LASTNAME']}' created in Atera.")
+        logging.info(f"Data sent: {json.dumps(data)}")
 
 def update_atera_contact(contact_id, contact):
     """Update an existing contact in Atera."""
@@ -398,9 +403,11 @@ def update_atera_contact(contact_id, contact):
     response = requests.post(url, headers=headers, json=data)
     if response.status_code not in [200, 201]:
         logging.error(f"Error updating contact ID {contact_id}: {response.status_code} - {response.text}")
+        logging.error(f"Error updating contact {response.text} Data sent: {json.dumps(data)}")
         response.raise_for_status()
     else:
         logging.info(f"Contact ID {contact_id} updated in Atera.")
+        logging.info(f"Data sent: {json.dumps(data)}")
 
 # ------------------- MAIN FUNCTION -------------------
 def main():

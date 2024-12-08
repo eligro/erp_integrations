@@ -336,13 +336,16 @@ def sync_contacts():
 
             first_name = (contact.get('FIRSTNAME') or '').strip()
             last_name = (contact.get('LASTNAME') or '').strip()
-
+            name = (contact.get('NAME') or '').strip()
             # If last name is missing, use first name as last name
             if not last_name:
                 last_name = first_name
+                if not first_name:
+                    first_name = name
+                    last_name = ''
 
             # If both names are missing, skip the contact
-            if not first_name and not last_name:
+            if not first_name and not last_name and not name:
                 reason = "Contact with missing name fields."
                 log_json("ERROR", reason, {"contact": contact})
                 continue
@@ -489,3 +492,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

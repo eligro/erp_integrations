@@ -5,6 +5,7 @@ import logging
 import os
 import json  # For JSON formatting in logs
 import re    # For phone number sanitization
+import csv
 
 # Set up logging to write to 'console.log' in the same folder as the script
 script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -57,6 +58,7 @@ SYNC_CUSTOMERS = bool(int(config.get('SYNC_CUSTOMERS', 0)))
 SYNC_CONTACTS = bool(int(config.get('SYNC_CONTACTS', 0)))
 SYNC_CONTRACTS = bool(int(config.get('SYNC_CONTRACTS', 0)))
 SYNC_SERVICE_CALLS = bool(int(config.get('SYNC_SERVICE_CALLS', 0)))
+DELETE_ALL_CUSTOMERS = bool(int(config.get('DELETE_ALL_CUSTOMERS', 0)))
 
 # ------------------- PHONE NUMBER SANITIZATION -------------------
 def sanitize_phone_number(phone_number):
@@ -82,7 +84,7 @@ def get_priority_customers():
     response.raise_for_status()
     return response.json()['value']
 
-def get_atera_customers():
+def get_atera_customers(fetch_custom_fields=True):
     """Fetch all existing customers from Atera and their 'Priority Customer Number' custom field."""
     url = "https://app.atera.com/api/v3/customers"
     headers = {
@@ -106,6 +108,8 @@ def get_atera_customers():
         customers.extend(items)
         page += 1
 
+    if not fetch_custom_fields:
+        return customers
     # Now fetch the 'Priority Customer Number' custom field for each customer
     for i, customer in enumerate(customers):
         if (i + 1) % 100 == 0 or i == 0:
@@ -391,6 +395,20 @@ def sync_contacts():
             log_json("ERROR", f"Error processing contact: {e}", {"contact": contact})
             continue
 
+
+def log_failed_duplicate_email(customer_id, email):
+    """Log failed duplicate emails to a CSV file."""
+    file_path = 'failed_duplicated_emails.csv'
+    # Check if the file exists to write headers only for new files
+    file_exists = os.path.isfile(file_path)
+    with open(file_path, mode='a', newline='', encoding='utf-8') as csvfile:
+        writer = csv.writer(csvfile)
+        if not file_exists:
+            # Write header if the file doesn't exist
+            writer.writerow(['CustomerID', 'EmailAddress'])
+        # Write the failed email
+        writer.writerow([customer_id, email])
+
 def create_atera_contact(customer_id, contact):
     """Create a contact in Atera."""
     url = "https://app.atera.com/api/v3/contacts"
@@ -414,23 +432,9 @@ def create_atera_contact(customer_id, contact):
 
     response = requests.post(url, headers=headers, json=data)
     if response.status_code in [409]:
-        # Modify email by appending customer ID before '@' and retry
-        email_parts = contact['EMAIL'].split('@')
-        if len(email_parts) == 2:
-            new_email = f"{email_parts[0]}+{contact['CUSTNAME']}@{email_parts[1]}"
-            log_json("INFO", f"Email already exists. Retrying with modified email.", {"original_email": contact['EMAIL'], "new_email": new_email})
-            data['Email'] = new_email
-            response = requests.post(url, headers=headers, json=data)
-            if response.status_code not in [200, 201]:
-                # Log as ERROR and include full data sent
-                log_json("ERROR", f"Error creating contact with modified email", {"status_code": response.status_code, "response": response.text, "data": data})
-                response.raise_for_status()
-            else:
-                log_json("INFO", f"Contact created with modified email.", {"contact_data": data})
-        else:
-            # Email format is invalid
-            log_json("ERROR", f"Invalid email format for contact", {"contact": contact})
-            response.raise_for_status()
+        # Log the duplicate email issue
+        log_json("INFO", f"Email already exists for customer.", {"CustomerID": customer_id, "Email": contact['EMAIL']})
+        log_failed_duplicate_email(customer_id, contact['EMAIL'])
     elif response.status_code not in [200, 201]:
         # Log as ERROR and include full data sent
         log_json("ERROR", f"Error creating contact", {"status_code": response.status_code, "response": response.text, "data": data})
@@ -463,6 +467,28 @@ def update_atera_contact(contact_id, contact):
         log_json("ERROR", f"Error updating contact ID {contact_id}", {"status_code": response.status_code, "response": response.text, "data": data})
         response.raise_for_status()
 
+def delete_all_atera_customers():
+    """Fetch all customers from Atera and delete them."""
+    atera_customers = get_atera_customers(fetch_custom_fields=False)  # Fetch all customers
+    for customer in atera_customers:
+        customer_id = customer['CustomerID']
+        log_json("INFO", f"Deleting customer from Atera.", {"CustomerID": customer_id, "CustomerName": customer.get('CustomerName', '')})
+        delete_atera_customer(customer_id)
+
+def delete_atera_customer(customer_id):
+    """Delete a customer from Atera."""
+    url = f"https://app.atera.com/api/v3/customers/{customer_id}"
+    headers = {
+        'X-Api-Key': ATERA_API_KEY,
+        'Accept': 'application/json'
+    }
+    response = requests.delete(url, headers=headers)
+    if response.status_code == 204:
+        log_json("INFO", f"Customer deleted successfully.", {"CustomerID": customer_id})
+    else:
+        log_json("ERROR", f"Error deleting customer ID {customer_id}", {"status_code": response.status_code, "response": response.text})
+
+
 # ------------------- MAIN FUNCTION -------------------
 def main():
     """Main function to run selected syncs based on config flags."""
@@ -487,6 +513,12 @@ def main():
     if SYNC_SERVICE_CALLS:
         log_json("INFO", "Syncing service calls from Atera to Priority as invoices...")
         # sync_service_calls()
+    else:
+        log_json("INFO", "Service call sync disabled in config.")
+
+    if DELETE_ALL_CUSTOMERS:
+        log_json("INFO", "Syncing service calls from Atera to Priority as invoices...")
+        delete_all_atera_customers()
     else:
         log_json("INFO", "Service call sync disabled in config.")
 

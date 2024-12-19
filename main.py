@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 from urllib.parse import quote
 import requests
 import logging
@@ -59,6 +59,8 @@ SYNC_CONTACTS = bool(int(config.get('SYNC_CONTACTS', 0)))
 SYNC_CONTRACTS = bool(int(config.get('SYNC_CONTRACTS', 0)))
 SYNC_SERVICE_CALLS = bool(int(config.get('SYNC_SERVICE_CALLS', 0)))
 DELETE_ALL_CUSTOMERS = bool(int(config.get('DELETE_ALL_CUSTOMERS', 0)))
+SYNC_TICKETS = bool(int(config.get('SYNC_TICKETS', 0)))  # New sync option
+DAYS_BACK_TICKETS = int(config.get('DAYS_BACK_TICKETS', 2))  # Days back to fetch tickets
 
 # ------------------- PHONE NUMBER SANITIZATION -------------------
 def sanitize_phone_number(phone_number):
@@ -103,9 +105,9 @@ def get_atera_customers(fetch_custom_fields=True):
             response.raise_for_status()
         data = response.json()
         items = data.get('items', [])
-        if not items:
-            break
         customers.extend(items)
+        if int(response['totalPages']) == page or not items:
+            break
         page += 1
 
     if not fetch_custom_fields:
@@ -489,6 +491,98 @@ def delete_atera_customer(customer_id):
         log_json("ERROR", f"Error deleting customer ID {customer_id}", {"status_code": response.status_code, "response": response.text})
 
 
+# ------------------- NEW TICKETS SYNC -------------------
+def get_atera_tickets(days_back):
+    # Get tickets from Atera created in the last X days
+    # We'll fetch all tickets and filter by creation date.
+    # API: GET /api/v3/tickets
+    # We'll paginate just in case. Max 50 per page.
+    url = "https://app.atera.com/api/v3/tickets"
+    headers = {
+        'X-Api-Key': ATERA_API_KEY,
+        'Accept': 'application/json'
+    }
+    tickets = []
+    page = 1
+    items_in_page = 50
+    cutoff_date = datetime.utcnow() - timedelta(days=days_back)
+    while True:
+        params = {
+            'page': page,
+            'itemsInPage': items_in_page
+        }
+        response = requests.get(url, headers=headers, params=params)
+        if response.status_code != 200:
+            log_json("ERROR", "Error fetching tickets from Atera", {"status_code": response.status_code, "response": response.text})
+            response.raise_for_status()
+
+        data = response.json()
+        fetched_items = data.get('items', [])
+        if not fetched_items:
+            break
+        for ticket in fetched_items:
+            created_date_str = ticket.get('TicketCreatedDate')
+            if created_date_str:
+                if "+" in created_date_str:
+                    # remove the offset part
+                    created_date = datetime.fromisoformat(created_date_str.split("+")[0])
+                else:
+                    created_date = datetime.fromisoformat(created_date_str)
+                if created_date >= cutoff_date:
+                    tickets.append(ticket)
+        if not data.get('nextLink'):
+            break
+        page += 1
+    return tickets
+
+def send_ticket_to_priority(custname, docno, tquant):
+    # POST to Priority endpoint MARH_LOADATERA
+    url = f"{PRIORITY_API_URL}/MARH_LOADATERA"
+    headers = {
+        'Content-Type': 'application/json'
+    }
+    auth = (PRIORITY_API_USER, PRIORITY_API_PASSWORD)
+    data = {
+        "CUSTNAME": custname,
+        "DOCNO": docno,
+        "TQUANT": tquant
+    }
+    response = requests.post(url, headers=headers, auth=auth, json=data)
+    if response.status_code not in [200, 201]:
+        log_json("ERROR", "Error sending ticket to Priority", {"status_code": response.status_code, "response": response.text, "data": data})
+        response.raise_for_status()
+    else:
+        log_json("INFO", "Ticket sent to Priority", {"data": data})
+
+def sync_tickets():
+    log_json("INFO", "Syncing tickets from Atera to Priority...")
+    tickets = get_atera_tickets(DAYS_BACK_TICKETS)
+    if not tickets:
+        log_json("INFO", "No tickets found for syncing.")
+        return
+
+    atera_customers = get_atera_customers()
+    priority_customer_map = {}
+    for cust in atera_customers:
+        # Map Priority Customer Number to Atera Customer
+        if 'PriorityCustomerNumber' in cust and cust['PriorityCustomerNumber']:
+            priority_customer_map[cust['CustomerID']] = cust['PriorityCustomerNumber']
+
+    for ticket in tickets:
+        customer_id = ticket.get('CustomerID')
+        if not customer_id or customer_id not in priority_customer_map:
+            log_json("ERROR", "No Priority customer number found for ticket.", {"TicketID": ticket.get('TicketID')})
+            continue
+
+        custname = priority_customer_map[customer_id]
+        docno = str(ticket.get('TicketID'))
+        onsite_minutes = ticket.get('OnSiteDurationMinutes', 0)
+        offsite_minutes = ticket.get('OffSiteDurationMinutes', 0)
+        total_minutes = onsite_minutes + offsite_minutes
+        tquant = total_minutes / 60.0
+
+        send_ticket_to_priority(custname, docno, tquant)
+
 # ------------------- MAIN FUNCTION -------------------
 def main():
     """Main function to run selected syncs based on config flags."""
@@ -517,10 +611,15 @@ def main():
         log_json("INFO", "Service call sync disabled in config.")
 
     if DELETE_ALL_CUSTOMERS:
-        log_json("INFO", "Syncing service calls from Atera to Priority as invoices...")
+        log_json("INFO", "Deleting all customers in Atera...")
         delete_all_atera_customers()
     else:
-        log_json("INFO", "Service call sync disabled in config.")
+        log_json("INFO", "Delete all customers disabled in config.")
+
+    if SYNC_TICKETS:
+        sync_tickets()
+    else:
+        log_json("INFO", "Ticket sync disabled in config.")
 
 if __name__ == "__main__":
     main()

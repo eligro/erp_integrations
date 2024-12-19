@@ -1,7 +1,9 @@
 # test_sync_module.py
 
-import pytest
-from main import sync_customers, sync_contacts
+from datetime import datetime, timedelta, timezone
+
+from main import sync_customers, sync_contacts, sync_tickets
+
 
 # Test for syncing customers
 def test_sync_customers_update(mocker):
@@ -165,6 +167,7 @@ def test_sync_customers_update(mocker):
 
     print("Customer sync test passed.")
 
+
 # Test for syncing contacts
 def test_sync_contacts_create_partial(mocker):
     # Define test data
@@ -271,3 +274,103 @@ def test_sync_contacts_create_partial(mocker):
     assert data_smith['Email'] == 'bob@example.com'  # Provided email
 
     print("Contacts sync test passed.")
+
+
+def test_sync_tickets(mocker):
+    # Configure the cutoff date
+    days_back = 2
+    cutoff_date = datetime.utcnow().replace(tzinfo=timezone.utc) - timedelta(days=days_back)
+    # Mock ticket creation date to be recent
+    recent_date_str = datetime.utcnow().isoformat()
+
+    # Mocked tickets from Atera (created in the last 2 days)
+    atera_tickets_response = {
+        "items": [
+            {
+                "TicketID": 123,
+                "CustomerID": 10,
+                "TicketCreatedDate": recent_date_str,
+                "OnSiteDurationMinutes": 120,
+                "OffSiteDurationMinutes": 30
+            }
+        ],
+        "totalItemCount": 1,
+        "page": 1,
+        "itemsInPage": 1,
+        "totalPages": 1,
+        "prevLink": None,
+        "nextLink": None
+    }
+
+    # Mocked Atera customers
+    atera_customers_response = {
+        "items": [
+            {
+                "CustomerID": 10,
+                "CustomerName": "Test Customer",
+                "PriorityCustomerNumber": "CUST002"
+            }
+        ]
+    }
+
+    # Mock GET requests
+    def mock_get_side_effect(url, *args, **kwargs):
+        if "tickets" in url:
+            # Tickets from Atera
+            response = mocker.MagicMock()
+            response.status_code = 200
+            response.json.return_value = atera_tickets_response
+            return response
+        elif "customers" in url and "customervalues" not in url:
+            # Atera customers
+            response = mocker.MagicMock()
+            response.status_code = 200
+            response.json.return_value = atera_customers_response
+            return response
+        elif "customerfield" in url:
+            # Custom field fetch
+            # If needed, return a response indicating field found
+            response = mocker.MagicMock()
+            response.status_code = 200
+            response.json.return_value = [{'ValueAsString': 'CUST002'}]
+            return response
+        else:
+            raise ValueError(f"Unhandled URL: {url}")
+
+    mocker.patch('main.requests.get', side_effect=mock_get_side_effect)
+
+    # Mock POST requests (to Priority and maybe Atera if needed)
+    mock_post = mocker.patch('main.requests.post')
+    # Priority response
+    mock_priority_response = mocker.MagicMock()
+    mock_priority_response.status_code = 201
+    mock_priority_response.json.return_value = {}
+    mock_post.return_value = mock_priority_response
+
+    # Run the sync_tickets function
+    sync_tickets()
+
+    # Check that a POST request was made to Priority
+    # The endpoint for Priority: {PRIORITY_API_URL}/MARH_LOADATERA
+    # The data should have CUSTNAME, DOCNO, TQUANT
+    # Calculated TQUANT = (OnSiteDurationMinutes + OffSiteDurationMinutes) / 60.0
+    # = (120 + 30) / 60 = 2.5
+    expected_data = {
+        "CUSTNAME": "CUST002",
+        "DOCNO": "123",
+        "TQUANT": 2.5
+    }
+
+    # Verify the call was made with the expected data
+    # Since we don't know the actual PRIORITY_API_URL from the test context,
+    # we can assert that the post was called with a URL ending with 'MARH_LOADATERA'
+    priority_call = None
+    for call in mock_post.call_args_list:
+        url = call.args[0]
+        if 'MARH_LOADATERA' in url:
+            priority_call = call
+            break
+
+    assert priority_call is not None, "Expected a call to Priority MARH_LOADATERA endpoint."
+    assert priority_call.kwargs['json'] == expected_data, "Data sent to Priority does not match expected."
+    print("Tickets sync test passed.")

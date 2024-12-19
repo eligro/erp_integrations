@@ -398,18 +398,17 @@ def sync_contacts():
             continue
 
 
-def log_failed_duplicate_email(customer_id, email):
+def log_failed_duplicate_email(customer_id, priority_customer_id, email):
     """Log failed duplicate emails to a CSV file."""
     file_path = 'failed_duplicated_emails.csv'
-    # Check if the file exists to write headers only for new files
     file_exists = os.path.isfile(file_path)
     with open(file_path, mode='a', newline='', encoding='utf-8') as csvfile:
         writer = csv.writer(csvfile)
         if not file_exists:
             # Write header if the file doesn't exist
-            writer.writerow(['CustomerID', 'EmailAddress'])
+            writer.writerow(['CustomerID', 'PriorityCustomerID', 'EmailAddress'])
         # Write the failed email
-        writer.writerow([customer_id, email])
+        writer.writerow([customer_id, priority_customer_id, email])
 
 def create_atera_contact(customer_id, contact):
     """Create a contact in Atera."""
@@ -433,16 +432,15 @@ def create_atera_contact(customer_id, contact):
     }
 
     response = requests.post(url, headers=headers, json=data)
-    if response.status_code in [409]:
-        # Log the duplicate email issue
-        log_json("INFO", f"Email already exists for customer.", {"CustomerID": customer_id, "Email": contact['EMAIL']})
-        log_failed_duplicate_email(customer_id, contact['EMAIL'])
+    if response.status_code == 409:
+        # Log the duplicate email issue along with the Priority Customer ID
+        priority_customer_id = contact.get('CUSTNAME', '')
+        log_json("INFO", f"Email already exists for customer.", {"CustomerID": customer_id, "PriorityCustomerID": priority_customer_id, "Email": contact['EMAIL']})
+        log_failed_duplicate_email(customer_id, priority_customer_id, contact['EMAIL'])
     elif response.status_code not in [200, 201]:
-        # Log as ERROR and include full data sent
         log_json("ERROR", f"Error creating contact", {"status_code": response.status_code, "response": response.text, "data": data})
         response.raise_for_status()
     else:
-        # Contact created successfully
         log_json("INFO", f"Contact created in Atera.", {"contact_data": data})
 
 def update_atera_contact(contact_id, contact):

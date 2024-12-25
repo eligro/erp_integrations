@@ -668,7 +668,6 @@ def sync_tickets():
         total_minutes = onsite_minutes + offsite_minutes
         tquant = total_minutes / 60.0
 
-        # 4. Send this ticket’s data to Priority
         send_ticket_to_priority(custname, docno, tquant)
 
 

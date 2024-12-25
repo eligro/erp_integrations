@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+# -*- coding: latin-1 -*-
 from datetime import datetime, timedelta
 from urllib.parse import quote
 import requests

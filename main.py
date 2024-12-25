@@ -739,7 +739,6 @@ def create_atera_contract(customer_id, contract):
         'Accept': 'text/html'
     }
     active = True
-    # Example: if STATDES == "מבוטל", mark inactive:
     if contract.get('STATDES') == "מבוטל":
         active = False
 
@@ -770,7 +769,6 @@ def create_atera_contract(customer_id, contract):
         r.raise_for_status()
 
     created_id = r.json().get('ActionID')
-    # Set the Priority Contract Number custom field
     if created_id:
         update_atera_contract_custom_field(created_id, "Priority Contract Number", contract['DOCNO'])
     return r.json()

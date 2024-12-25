@@ -58,7 +58,7 @@ SYNC_CUSTOMERS = bool(int(config.get('SYNC_CUSTOMERS', 0)))
 SYNC_CONTACTS = bool(int(config.get('SYNC_CONTACTS', 0)))
 SYNC_CONTRACTS = bool(int(config.get('SYNC_CONTRACTS', 0)))
 SYNC_SERVICE_CALLS = bool(int(config.get('SYNC_SERVICE_CALLS', 0)))
-DELETE_ALL_CUSTOMERS = bool(int(config.get('DELETE_ALL_CUSTOMERS', 0)))
+# DELETE_ALL_CUSTOMERS = bool(int(config.get('DELETE_ALL_CUSTOMERS', 0)))
 SYNC_TICKETS = bool(int(config.get('SYNC_TICKETS', 0)))  # New sync option
 DAYS_BACK_TICKETS = int(config.get('DAYS_BACK_TICKETS', 2))  # Days back to fetch tickets
 PULL_PERIOD_DAYS = int(config.get('PULL_PERIOD_DAYS', 2))
@@ -468,26 +468,26 @@ def update_atera_contact(contact_id, contact):
         log_json("ERROR", f"Error updating contact ID {contact_id}", {"status_code": response.status_code, "response": response.text, "data": data})
         response.raise_for_status()
 
-def delete_all_atera_customers():
-    """Fetch all customers from Atera and delete them."""
-    atera_customers = get_atera_customers(fetch_custom_fields=False)  # Fetch all customers
-    for customer in atera_customers:
-        customer_id = customer['CustomerID']
-        log_json("INFO", f"Deleting customer from Atera.", {"CustomerID": customer_id, "CustomerName": customer.get('CustomerName', '')})
-        delete_atera_customer(customer_id)
+# def delete_all_atera_customers():
+#     """Fetch all customers from Atera and delete them."""
+#     atera_customers = get_atera_customers(fetch_custom_fields=False)  # Fetch all customers
+#     for customer in atera_customers:
+#         customer_id = customer['CustomerID']
+#         log_json("INFO", f"Deleting customer from Atera.", {"CustomerID": customer_id, "CustomerName": customer.get('CustomerName', '')})
+#         delete_atera_customer(customer_id)
 
-def delete_atera_customer(customer_id):
-    """Delete a customer from Atera."""
-    url = f"https://app.atera.com/api/v3/customers/{customer_id}"
-    headers = {
-        'X-Api-Key': ATERA_API_KEY,
-        'Accept': 'application/json'
-    }
-    response = requests.delete(url, headers=headers)
-    if response.status_code == 204:
-        log_json("INFO", f"Customer deleted successfully.", {"CustomerID": customer_id})
-    else:
-        log_json("ERROR", f"Error deleting customer ID {customer_id}", {"status_code": response.status_code, "response": response.text})
+# def delete_atera_customer(customer_id):
+#     """Delete a customer from Atera."""
+#     url = f"https://app.atera.com/api/v3/customers/{customer_id}"
+#     headers = {
+#         'X-Api-Key': ATERA_API_KEY,
+#         'Accept': 'application/json'
+#     }
+#     response = requests.delete(url, headers=headers)
+#     if response.status_code == 204:
+#         log_json("INFO", f"Customer deleted successfully.", {"CustomerID": customer_id})
+#     else:
+#         log_json("ERROR", f"Error deleting customer ID {customer_id}", {"status_code": response.status_code, "response": response.text})
 
 def get_atera_tickets(days_back):
     # Get tickets from Atera created in the last X days
@@ -877,11 +877,11 @@ def main():
     else:
         log_json("INFO", "Service call sync disabled in config.")
 
-    if DELETE_ALL_CUSTOMERS:
-        log_json("INFO", "Deleting all customers in Atera...")
-        delete_all_atera_customers()
-    else:
-        log_json("INFO", "Delete all customers disabled in config.")
+    # if DELETE_ALL_CUSTOMERS:
+    #     log_json("INFO", "Deleting all customers in Atera...")
+    #     delete_all_atera_customers()
+    # else:
+    #     log_json("INFO", "Delete all customers disabled in config.")
 
     if SYNC_TICKETS:
         sync_tickets()

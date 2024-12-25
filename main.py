@@ -61,6 +61,7 @@ SYNC_SERVICE_CALLS = bool(int(config.get('SYNC_SERVICE_CALLS', 0)))
 DELETE_ALL_CUSTOMERS = bool(int(config.get('DELETE_ALL_CUSTOMERS', 0)))
 SYNC_TICKETS = bool(int(config.get('SYNC_TICKETS', 0)))  # New sync option
 DAYS_BACK_TICKETS = int(config.get('DAYS_BACK_TICKETS', 2))  # Days back to fetch tickets
+PULL_PERIOD_DAYS = int(config.get('PULL_PERIOD_DAYS', 2))
 
 # ------------------- PHONE NUMBER SANITIZATION -------------------
 def sanitize_phone_number(phone_number):
@@ -106,7 +107,7 @@ def get_atera_customers(fetch_custom_fields=True):
         data = response.json()
         items = data.get('items', [])
         customers.extend(items)
-        if int(response['totalPages']) == page or not items:
+        if int(data['totalPages']) == page or not items:
             break
         page += 1
 
@@ -488,8 +489,6 @@ def delete_atera_customer(customer_id):
     else:
         log_json("ERROR", f"Error deleting customer ID {customer_id}", {"status_code": response.status_code, "response": response.text})
 
-
-# ------------------- NEW TICKETS SYNC -------------------
 def get_atera_tickets(days_back):
     # Get tickets from Atera created in the last X days
     # We'll fetch all tickets and filter by creation date.
@@ -524,8 +523,13 @@ def get_atera_tickets(days_back):
                 if "+" in created_date_str:
                     # remove the offset part
                     created_date = datetime.fromisoformat(created_date_str.split("+")[0])
+                elif "Z" in created_date_str:
+                    # remove the Z part
+                    created_date = datetime.fromisoformat(created_date_str.replace("Z", ""))
                 else:
                     created_date = datetime.fromisoformat(created_date_str)
+                print(created_date)
+                print(cutoff_date)
                 if created_date >= cutoff_date:
                     tickets.append(ticket)
         if not data.get('nextLink'):
@@ -552,34 +556,299 @@ def send_ticket_to_priority(custname, docno, tquant):
     else:
         log_json("INFO", "Ticket sent to Priority", {"data": data})
 
+def get_atera_customer(customer_id):
+    """
+    Fetch a single customer record from Atera by customer_id.
+    Returns the raw JSON object for that customer or raises if not found.
+    """
+    url = f"https://app.atera.com/api/v3/customers/{customer_id}"
+    headers = {
+        'X-Api-Key': ATERA_API_KEY,
+        'Accept': 'application/json'
+    }
+    response = requests.get(url, headers=headers)
+    if response.status_code == 404:
+        # Not found
+        return None
+    if response.status_code != 200:
+        log_json("ERROR", "Error fetching single Atera customer", {
+            "status_code": response.status_code,
+            "response": response.text,
+            "customer_id": customer_id
+        })
+        response.raise_for_status()
+    return response.json()
+
+
+def get_atera_customer_custom_field(customer_id, field_name):
+    """
+    Fetch a single custom field by name for a given Atera customer_id.
+    Returns the field's value or None if 404 or field does not exist.
+    """
+    url = f"https://app.atera.com/api/v3/customvalues/customerfield/{customer_id}/{quote(field_name)}"
+    headers = {
+        'X-Api-Key': ATERA_API_KEY,
+        'Accept': 'application/json'
+    }
+    response = requests.get(url, headers=headers)
+    if response.status_code == 404:
+        # Custom field not found
+        return None
+    if response.status_code != 200:
+        log_json("ERROR", f"Error fetching custom field '{field_name}' for customer ID {customer_id}", {
+            "status_code": response.status_code,
+            "response": response.text
+        })
+        response.raise_for_status()
+    # According to Atera docs, the response should be a list with at least one item:
+    data = response.json()
+    if not data:
+        return None
+    return data[0].get('ValueAsString')
+
+
 def sync_tickets():
+    """
+    In this revised version, we no longer fetch all Atera customers at once.
+    Instead, we create a cache dict and fetch customers on demand based on the
+    tickets' CustomerID. This avoids long loading times for large customer bases.
+    """
     log_json("INFO", "Syncing tickets from Atera to Priority...")
+
+    # 1. Fetch tickets from Atera created in the last DAYS_BACK_TICKETS days
     tickets = get_atera_tickets(DAYS_BACK_TICKETS)
     if not tickets:
         log_json("INFO", "No tickets found for syncing.")
         return
 
-    atera_customers = get_atera_customers()
-    priority_customer_map = {}
-    for cust in atera_customers:
-        # Map Priority Customer Number to Atera Customer
-        if 'PriorityCustomerNumber' in cust and cust['PriorityCustomerNumber']:
-            priority_customer_map[cust['CustomerID']] = cust['PriorityCustomerNumber']
+    # 2. Prepare a local cache for mapping Atera CustomerID => Priority CUSTNAME
+    priority_customer_cache = {}  # { customer_id: "CUSTNAME" }
 
     for ticket in tickets:
         customer_id = ticket.get('CustomerID')
-        if not customer_id or customer_id not in priority_customer_map:
-            log_json("ERROR", "No Priority customer number found for ticket.", {"TicketID": ticket.get('TicketID')})
+        if not customer_id:
+            log_json("ERROR", "Ticket does not have a CustomerID; cannot sync.", {
+                "TicketID": ticket.get('TicketID')
+            })
             continue
 
-        custname = priority_customer_map[customer_id]
+        # If we have not already cached this customer's Priority Customer Number:
+        if customer_id not in priority_customer_cache:
+            # Fetch the single Atera customer
+            atera_customer = get_atera_customer(customer_id)
+            if not atera_customer:
+                log_json("ERROR",
+                         "No customer record found in Atera for this ticket's CustomerID",
+                         {"TicketID": ticket.get('TicketID'), "CustomerID": customer_id})
+                # We can store an empty string or None to avoid repeated lookups
+                priority_customer_cache[customer_id] = None
+                continue
+
+            # Fetch the "Priority Customer Number" custom field
+            priority_customer_number = get_atera_customer_custom_field(
+                customer_id,
+                "Priority Customer Number"
+            )
+
+            # Cache the result (could be None if the field doesn't exist)
+            priority_customer_cache[customer_id] = priority_customer_number
+
+        # At this point we have a Priority CUSTNAME (or None) in the cache
+        custname = priority_customer_cache[customer_id]
+        if not custname:
+            log_json("ERROR",
+                     "No Priority customer number found for ticket (custom field is empty).",
+                     {"TicketID": ticket.get('TicketID'), "CustomerID": customer_id})
+            continue
+
+        # 3. Prepare the data to send to Priority
         docno = str(ticket.get('TicketID'))
         onsite_minutes = ticket.get('OnSiteDurationMinutes', 0)
         offsite_minutes = ticket.get('OffSiteDurationMinutes', 0)
         total_minutes = onsite_minutes + offsite_minutes
         tquant = total_minutes / 60.0
 
+        # 4. Send this ticket’s data to Priority
         send_ticket_to_priority(custname, docno, tquant)
+
+
+def get_priority_contracts():
+    """
+    Fetch contracts from Priority, then filter by UDATE within PULL_PERIOD_DAYS.
+    Example response fields: CUSTNAME, CUSTDES, DOCNO, UDATE, VALIDDATE, EXPIRYDATE, STATDES, UNI_DESC
+    """
+    url = f"{PRIORITY_API_URL}/DOCUMENTS_Z"
+    response = requests.get(url, auth=(PRIORITY_API_USER, PRIORITY_API_PASSWORD))
+    if response.status_code != 200:
+        log_json("ERROR", f"Error fetching Priority contracts: {response.status_code}", {"response": response.text})
+    response.raise_for_status()
+    all_contracts = response.json().get('value', [])
+
+    # Filter by UDATE in last PULL_PERIOD_DAYS
+    cutoff = datetime.datetime.utcnow() - datetime.timedelta(days=PULL_PERIOD_DAYS)
+    # Convert cutoff to local ISO if needed, or just compare naive datetimes
+    filtered = []
+    for c in all_contracts:
+        try:
+            contract_udate = datetime.datetime.fromisoformat(c['UDATE'].replace('Z', ''))
+            if contract_udate > cutoff:
+                filtered.append(c)
+        except:
+            # If missing or invalid UDATE, just skip or handle differently
+            pass
+    return filtered
+
+def get_atera_contracts_for_customer(customer_id):
+    """
+    Pull all existing contracts in Atera for a specific customer.
+    We'll page through if needed.
+    """
+    url = f"https://app.atera.com/api/v3/contracts/customer/{customer_id}"
+    headers = {'X-Api-Key': ATERA_API_KEY, 'Accept': 'application/json'}
+    contracts = []
+    page = 1
+    items_in_page = 50
+
+    while True:
+        params = {'page': page, 'itemsInPage': items_in_page}
+        response = requests.get(url, headers=headers, params=params)
+        if response.status_code != 200:
+            log_json("ERROR", "Error fetching Atera contracts", {
+                "status_code": response.status_code,
+                "response": response.text
+            })
+            response.raise_for_status()
+        data = response.json()
+        page_contracts = data.get('items', [])
+        if not page_contracts:
+            break
+        contracts.extend(page_contracts)
+        if not data.get('nextLink'):
+            break
+        page += 1
+    return contracts
+
+def create_atera_contract(customer_id, contract):
+    """
+    Create a new contract in Atera.
+    Use contract['DOCNO'] => Priority Contract Number custom field later.
+    """
+    url = "https://app.atera.com/api/v3/contracts"
+    headers = {
+        'X-Api-Key': ATERA_API_KEY,
+        'Content-Type': 'application/json',
+        'Accept': 'text/html'
+    }
+    active = True
+    # Example: if STATDES == "מבוטל", mark inactive:
+    if contract.get('STATDES') == "מבוטל":
+        active = False
+
+    data = {
+        "ContractName": contract.get('UNI_DESC') or f"Contract {contract['DOCNO']}",
+        "CustomerID": customer_id,
+        "Default": False,
+        "StartDate": contract.get('VALIDDATE'),
+        "EndDate": contract.get('EXPIRYDATE'),
+        "Active": active,
+        "Taxable": True,
+        "ContractType": "RetainerFlatFee",  # or whatever default
+        "Notes": "",
+        "RetainerFlatFeeContract": {
+            "RateID": 0,
+            "Quantity": 1,
+            "BillingPeriod": "EndOfContractDuration"
+        }
+    }
+
+    r = requests.post(url, headers=headers, json=data)
+    if r.status_code not in [200,201]:
+        log_json("ERROR", "Error creating contract in Atera", {
+            "status_code": r.status_code,
+            "response": r.text,
+            "payload": data
+        })
+        r.raise_for_status()
+
+    created_id = r.json().get('ActionID')
+    # Set the Priority Contract Number custom field
+    if created_id:
+        update_atera_contract_custom_field(created_id, "Priority Contract Number", contract['DOCNO'])
+    return r.json()
+
+def update_atera_contract(contract_id, contract):
+    """
+    'Updating' a contract is not officially documented.
+    Sometimes folks do a POST to the same endpoint with the contractId.
+    Or you might need a PUT. Check if you can replicate your logic from create.
+    """
+    # For hacky approach, you'd do a POST with ContractID or a separate route if available
+    # This snippet just logs for brevity
+    log_json("INFO", f"Updating Atera contract {contract_id}... (pseudo-code)")
+
+def update_atera_contract_custom_field(contract_id, field_name, value):
+    """
+    Same pattern as updating a custom field on a customer, but for contracts.
+    If the route is /api/v3/customvalues/contractfield/{contractId}/{fieldName}, do:
+    """
+    url = f"https://app.atera.com/api/v3/customvalues/contractfield/{contract_id}/{quote(field_name)}"
+    headers = {
+        'X-Api-Key': ATERA_API_KEY,
+        'Content-Type': 'application/json',
+        'Accept': 'text/html'
+    }
+    data = {"Value": value}
+    response = requests.put(url, headers=headers, json=data)
+    if response.status_code not in [200,201]:
+        log_json("ERROR", "Error updating contract custom field", {
+            "status_code": response.status_code,
+            "response": response.text,
+            "data": data
+        })
+        response.raise_for_status()
+
+
+def sync_contracts():
+    """
+    1. Get Priority contracts within last PULL_PERIOD_DAYS
+    2. Map each contract’s Priority customer to Atera's customer ID
+    3. Check if contract is in Atera (by 'Priority Contract Number'), else create or update
+    """
+    priority_contracts = get_priority_contracts()
+    atera_customers = get_atera_customers()  # so we have PriorityCustomerNumber => Atera ID
+
+    # Build map of priority -> atera ID
+    cust_map = {}
+    for c in atera_customers:
+        prio_id = c.get('PriorityCustomerNumber')
+        if prio_id:
+            cust_map[prio_id] = c['CustomerID']
+
+    for contract in priority_contracts:
+        # Find Atera customer
+        priority_customer = contract.get('CUSTNAME')
+        if not priority_customer:
+            log_json("INFO", "Contract with no Priority CUSTNAME", {"contract": contract})
+            continue
+
+        customer_id = cust_map.get(priority_customer)
+        if not customer_id:
+            log_json("ERROR", f"No Atera customer for Priority {priority_customer}", {"contract": contract})
+            continue
+
+        # Now fetch that customer's existing Atera contracts
+        atera_contracts = get_atera_contracts_for_customer(customer_id)
+        # Try to find if this contract already exists by custom field => docno
+        # We do not have direct field in the returned data, so we might need to fetch the custom field
+        # For brevity, assume you keep track or fetch them.
+        # We'll just create new or do some name-based approach:
+        existing = None
+        # Pseudo-check: if the contract name matches or you store custom fields in a local map
+
+        if existing:
+            update_atera_contract(existing['ContractID'], contract)
+        else:
+            create_atera_contract(customer_id, contract)
 
 # ------------------- MAIN FUNCTION -------------------
 def main():

@@ -854,6 +854,7 @@ def sync_contracts():
             # do nothing
             log_json("INFO", "Contract already exists in Atera, skipping", {"contract": contract})
         else:
+            log_json("INFO", "Creating contract in Atera", {"contract": contract})
             create_atera_contract(customer_id, contract)
 
 # ------------------- MAIN FUNCTION -------------------
@@ -873,7 +874,7 @@ def main():
 
     if SYNC_CONTRACTS:
         log_json("INFO", "Syncing contracts from Priority to Atera...")
-        # sync_contracts()
+        sync_contracts()
     else:
         log_json("INFO", "Contract sync disabled in config.")
 

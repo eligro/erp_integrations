@@ -547,7 +547,7 @@ def send_ticket_to_priority(custname, docno, tquant):
     auth = (PRIORITY_API_USER, PRIORITY_API_PASSWORD)
     data = {
         "CUSTNAME": custname,
-        "DOCNO": docno,
+        "ATERADOCNO": docno,
         "TQUANT": tquant
     }
     response = requests.post(url, headers=headers, auth=auth, json=data)

@@ -538,7 +538,7 @@ def get_atera_tickets(days_back):
         page += 1
     return tickets
 
-def send_ticket_to_priority(custname, docno, tquant, ticket_status):
+def send_ticket_to_priority(custname, docno, tquant, ticket_status, payment_type):
     # POST to Priority endpoint MARH_LOADATERA
     url = f"{PRIORITY_API_URL}/MARH_LOADATERA"
     headers = {
@@ -549,7 +549,8 @@ def send_ticket_to_priority(custname, docno, tquant, ticket_status):
         "CUSTNAME": custname,
         "ATERADOCNO": docno,
         "TQUANT": tquant,
-        "ATERASTATUS": ticket_status
+        "ATERASTATUS": ticket_status,
+        "ATERATICKETTYPE": payment_type,
     }
     response = requests.post(url, headers=headers, auth=auth, json=data)
     if response.status_code not in [200, 201]:
@@ -684,6 +685,7 @@ def sync_tickets():
 
         # Fetch the custom field Technician Billable Hours
         tech_hours_str = get_atera_ticket_custom_field(ticket.get('TicketID'), "Technician Billable Hours")
+        payment_type = get_atera_ticket_custom_field(ticket.get('TicketID'), "Payment")
         if not tech_hours_str:
             # Fall back to 0 if missing or error
             tquant = 0
@@ -700,7 +702,7 @@ def sync_tickets():
                 })
                 tquant = 0
 
-        send_ticket_to_priority(custname, docno, tquant, ticket_status)
+        send_ticket_to_priority(custname, docno, tquant, ticket_status, payment_type)
 
 
 def get_priority_contracts():
@@ -874,6 +876,7 @@ def sync_contracts():
             log_json("ERROR", f"No matching Atera customer for Priority {priority_customer}", {"contract": contract})
             continue
 
+        # TODO check if contract already exists in Atera
         # Fetch existing contracts for this Atera customer
         atera_contracts = get_atera_contracts_for_customer(customer_id)
 

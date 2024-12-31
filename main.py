@@ -538,7 +538,7 @@ def get_atera_tickets(days_back):
         page += 1
     return tickets
 
-def send_ticket_to_priority(custname, docno, tquant):
+def send_ticket_to_priority(custname, docno, tquant, ticket_status):
     # POST to Priority endpoint MARH_LOADATERA
     url = f"{PRIORITY_API_URL}/MARH_LOADATERA"
     headers = {
@@ -548,7 +548,8 @@ def send_ticket_to_priority(custname, docno, tquant):
     data = {
         "CUSTNAME": custname,
         "ATERADOCNO": docno,
-        "TQUANT": tquant
+        "TQUANT": tquant,
+        "ATERASTATUS": ticket_status
     }
     response = requests.post(url, headers=headers, auth=auth, json=data)
     if response.status_code not in [200, 201]:
@@ -607,6 +608,21 @@ def get_atera_customer_custom_field(customer_id, field_name):
         return None
     return data[0].get('ValueAsString')
 
+def get_atera_ticket_custom_field(ticket_id, field_name):
+    """Fetch a custom field value for a given ticket."""
+    url = f"https://app.atera.com/api/v3/customvalues/ticketfield/{ticket_id}/{quote(field_name)}"
+    headers = {
+        'X-Api-Key': ATERA_API_KEY,
+        'Accept': 'application/json'
+    }
+    response = requests.get(url, headers=headers)
+    if response.status_code == 404:
+        return None
+    response.raise_for_status()
+    data = response.json()
+    if not data or 'ValueAsString' not in data[0]:
+        return None
+    return data[0]['ValueAsString']  # or data[0]['ValueAsDecimal'] if you prefer
 
 def sync_tickets():
     """
@@ -663,13 +679,28 @@ def sync_tickets():
             continue
 
         # 3. Prepare the data to send to Priority
+        ticket_status = ticket['TicketStatus']
         docno = str(ticket.get('TicketID'))
-        onsite_minutes = ticket.get('OnSiteDurationMinutes', 0)
-        offsite_minutes = ticket.get('OffSiteDurationMinutes', 0)
-        total_minutes = onsite_minutes + offsite_minutes
-        tquant = total_minutes / 60.0
 
-        send_ticket_to_priority(custname, docno, tquant)
+        # Fetch the custom field Technician Billable Hours
+        tech_hours_str = get_atera_ticket_custom_field(ticket.get('TicketID'), "Technician Billable Hours")
+        if not tech_hours_str:
+            # Fall back to 0 if missing or error
+            tquant = 0
+            log_json("ERROR", "Failed to fetch Technician Billable Hours custom field.", {
+                "TicketID": ticket.get('TicketID')
+            })
+        else:
+            try:
+                tquant = float(tech_hours_str)
+            except ValueError:
+                log_json("ERROR", "Failed to parse Technician Billable Hours custom field as float.", {
+                    "TicketID": ticket.get('TicketID'),
+                    "TechHoursValue": tech_hours_str
+                })
+                tquant = 0
+
+        send_ticket_to_priority(custname, docno, tquant, ticket_status)
 
 
 def get_priority_contracts():
@@ -814,7 +845,7 @@ def update_atera_contract_custom_field(contract_id, field_name, value):
 def sync_contracts():
     """
     1. Get Priority contracts updated in last PULL_PERIOD_DAYS (by UDATE).
-    2. Map each contract?s Priority customer -> Atera customer ID.
+    2. Map each contract's Priority customer -> Atera customer ID.
     3. Check if contract is in Atera by 'Priority Contract Number'. If not, create. If yes, update.
     """
     log_json("INFO", "Syncing contracts from Priority to Atera...")

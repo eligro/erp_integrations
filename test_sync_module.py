@@ -2,7 +2,7 @@
 
 from datetime import datetime, timedelta, timezone
 
-from main import sync_customers, sync_contacts, sync_tickets
+from main import sync_contracts, sync_customers, sync_contacts, sync_tickets
 
 
 # Test for syncing customers
@@ -374,3 +374,150 @@ def test_sync_tickets(mocker):
     assert priority_call is not None, "Expected a call to Priority MARH_LOADATERA endpoint."
     assert priority_call.kwargs['json'] == expected_data, "Data sent to Priority does not match expected."
     print("Tickets sync test passed.")
+
+
+def test_sync_contracts_create_new(mocker):
+    """
+    Test that a new contract from Priority is created in Atera
+    if no matching 'Priority Contract Number' is found.
+    """
+
+    # Priority contracts (one contract) - updated recently
+    priority_contracts = {
+        'value': [
+            {
+                'CUSTNAME': 'CUST001',
+                'CUSTDES': 'Customer One',
+                'DOCNO': 'CONTRACT001',
+                'UDATE': datetime.utcnow().isoformat() + 'Z',  # updated now
+                'VALIDDATE': '2025-02-01T00:00:00Z',
+                'EXPIRYDATE': '2025-12-31T00:00:00Z',
+                'STATDES': 'Active',
+                'UNI_DESC': 'Sample Contract'
+            }
+        ]
+    }
+
+    # Atera customers (matching Priority customer)
+    atera_customers = {
+        'items': [
+            {
+                'CustomerID': 999,
+                'CustomerName': 'Customer One',
+                'PriorityCustomerNumber': 'CUST001'
+            }
+        ]
+    }
+
+    # Atera contracts for this customer -> empty
+    atera_contracts_empty = {
+        'items': [],
+        'page': 1,
+        'itemsInPage': 0,
+        'totalPages': 1
+    }
+
+    # Mock fetch Priority contracts
+    mock_get_priority_contracts = mocker.patch('main.get_priority_contracts')
+    mock_get_priority_contracts.return_value = priority_contracts['value']
+
+    # Mock get Atera customers
+    mock_get_atera_customers = mocker.patch('main.get_atera_customers')
+    mock_get_atera_customers.return_value = atera_customers['items']
+
+    # Mock get Atera contracts for a customer (no existing contracts)
+    mock_get_atera_contracts_for_customer = mocker.patch('main.get_atera_contracts_for_customer')
+    mock_get_atera_contracts_for_customer.return_value = atera_contracts_empty['items']
+
+    # Mock create contract
+    mock_create_atera_contract = mocker.patch('main.create_atera_contract')
+
+    # Run
+    sync_contracts()
+
+    # Assert we tried to create it
+    mock_create_atera_contract.assert_called_once()
+    args, kwargs = mock_create_atera_contract.call_args
+    customer_id_arg, contract_arg = args
+    assert customer_id_arg == 999
+    assert contract_arg['DOCNO'] == 'CONTRACT001'
+    print("test_sync_contracts_create_new passed.")
+
+
+def test_sync_contracts_skip_existing(mocker):
+    """
+    Test that if the contract's DOCNO already exists in Atera (via custom field),
+    we skip creating a new one.
+    """
+
+    # Priority contracts (one contract) - updated recently
+    priority_contracts = {
+        'value': [
+            {
+                'CUSTNAME': 'CUST001',
+                'CUSTDES': 'Customer One',
+                'DOCNO': 'CONTRACT001',
+                'UDATE': datetime.utcnow().isoformat() + 'Z',  # updated now
+                'VALIDDATE': '2025-02-01T00:00:00Z',
+                'EXPIRYDATE': '2025-12-31T00:00:00Z',
+                'STATDES': 'Active',
+                'UNI_DESC': 'Sample Contract'
+            }
+        ]
+    }
+
+    # Atera customers
+    atera_customers = {
+        'items': [
+            {
+                'CustomerID': 999,
+                'CustomerName': 'Customer One',
+                'PriorityCustomerNumber': 'CUST001'
+            }
+        ]
+    }
+
+    # Atera already has a contract with the same DOCNO in its custom field
+    atera_contracts_with_one = {
+        'items': [
+            {
+                "ContractID": 1234,
+                "ContractName": "Sample Contract",
+            }
+        ],
+        'page': 1,
+        'itemsInPage': 1,
+        'totalPages': 1
+    }
+
+    # Mock fetch Priority contracts
+    mock_get_priority_contracts = mocker.patch('main.get_priority_contracts')
+    mock_get_priority_contracts.return_value = priority_contracts['value']
+
+    # Mock get Atera customers
+    mock_get_atera_customers = mocker.patch('main.get_atera_customers')
+    mock_get_atera_customers.return_value = atera_customers['items']
+
+    # Mock get Atera contracts
+    mock_get_atera_contracts_for_customer = mocker.patch('main.get_atera_contracts_for_customer')
+    mock_get_atera_contracts_for_customer.return_value = atera_contracts_with_one['items']
+
+    # Mock contract custom field fetch to return 'CONTRACT001' => means already exists
+    def mock_get_atera_contract_custom_field_side_effect(contract_id, field_name):
+        if contract_id == 1234 and field_name == 'Priority Contract Number':
+            return 'CONTRACT001'
+        return None
+
+    mock_get_atera_contract_custom_field = mocker.patch(
+        'main.get_atera_contract_custom_field',
+        side_effect=mock_get_atera_contract_custom_field_side_effect
+    )
+
+    mock_create_atera_contract = mocker.patch('main.create_atera_contract')
+
+    # Run
+    sync_contracts()
+
+    # Assert we did NOT create a new contract (skip logic)
+    mock_create_atera_contract.assert_not_called()
+    print("test_sync_contracts_skip_existing passed.")

@@ -63,8 +63,8 @@ SYNC_SERVICE_CALLS = bool(int(config.get('SYNC_SERVICE_CALLS', 0)))
 SYNC_TICKETS = bool(int(config.get('SYNC_TICKETS', 0)))  # New sync option
 DAYS_BACK_TICKETS = int(config.get('DAYS_BACK_TICKETS', 2))  # Days back to fetch tickets
 PULL_PERIOD_DAYS = int(config.get('PULL_PERIOD_DAYS', 2))
-CANCELLED_STATUS = config.get('CANCELLED_STATUS_HEBREW')
-ACTIVE_STATUS = config.get('ACTIVE_STATUS_HEBREW')
+CANCELLED_CONTRACT_STATUS_HEBREW = config.get('CANCELLED_CONTRACT_STATUS_HEBREW')
+ACTIVE_CUSTOMER_STATUS_HEBREW = config.get('ACTIVE_CUSTOMER_STATUS_HEBREW')
 # ------------------- PHONE NUMBER SANITIZATION -------------------
 def sanitize_phone_number(phone_number):
     """Sanitize phone numbers to include only '+', '-', and digits."""
@@ -797,7 +797,7 @@ def create_atera_contract(customer_id, contract):
         'Accept': 'application/json'
     }
     # If STATDES == '?????' => set Active = False
-    active = contract.get('STATDES') != CANCELLED_STATUS
+    active = contract.get('STATDES') != CANCELLED_CONTRACT_STATUS_HEBREW
     if not active:
         log_json("INFO", "Skipping contract with inactive STATDES.", {"contract": contract})
         return
@@ -920,14 +920,14 @@ def sync_contracts():
             log_json("ERROR", "No matching customer in Priority", {"CUSTDES": custdes, "contract": contract})
             continue
 
-        if priority_cust.get('STATDES') != ACTIVE_STATUS:
+        if priority_cust.get('STATDES') != ACTIVE_CUSTOMER_STATUS_HEBREW:
             log_json("INFO", "Skipping contract because customer is not active.", {
                 "CUSTDES": custdes,
                 "contract": contract
             })
             continue
 
-        if contract.get('STATDES') == CANCELLED_STATUS:
+        if contract.get('STATDES') == CANCELLED_CONTRACT_STATUS_HEBREW:
             log_json("INFO", "Skipping contract because contract STATDES is cancelled.", {
                 "DOCNO": doc_no
             })

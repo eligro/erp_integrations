@@ -63,7 +63,8 @@ SYNC_SERVICE_CALLS = bool(int(config.get('SYNC_SERVICE_CALLS', 0)))
 SYNC_TICKETS = bool(int(config.get('SYNC_TICKETS', 0)))  # New sync option
 DAYS_BACK_TICKETS = int(config.get('DAYS_BACK_TICKETS', 2))  # Days back to fetch tickets
 PULL_PERIOD_DAYS = int(config.get('PULL_PERIOD_DAYS', 2))
-
+CANCELLED_STATUS = config.get('CANCELLED_STATUS_HEBREW')
+ACTIVE_STATUS = config.get('ACTIVE_STATUS_HEBREW')
 # ------------------- PHONE NUMBER SANITIZATION -------------------
 def sanitize_phone_number(phone_number):
     """Sanitize phone numbers to include only '+', '-', and digits."""
@@ -796,7 +797,7 @@ def create_atera_contract(customer_id, contract):
         'Accept': 'application/json'
     }
     # If STATDES == '?????' => set Active = False
-    active = contract.get('STATDES') != "מבוטל"
+    active = contract.get('STATDES') != CANCELLED_STATUS
     if not active:
         log_json("INFO", "Skipping contract with inactive STATDES.", {"contract": contract})
         return
@@ -914,22 +915,20 @@ def sync_contracts():
             log_json("ERROR", "Missing CUSTNAME or DOCNO in contract, skipping", {"contract": contract})
             continue
 
-        # Check if the Priority customer is active (STATDES == 'פעיל')
         priority_cust = priority_customers_map.get(custdes)
         if not priority_cust:
             log_json("ERROR", "No matching customer in Priority", {"CUSTDES": custdes, "contract": contract})
             continue
 
-        if priority_cust.get('STATDES') != 'פעיל':
+        if priority_cust.get('STATDES') != ACTIVE_STATUS:
             log_json("INFO", "Skipping contract because customer is not active.", {
                 "CUSTDES": custdes,
                 "contract": contract
             })
             continue
 
-        # Check if contract itself is active (STATDES != 'מבוטל')
-        if contract.get('STATDES') == 'מבוטל':
-            log_json("INFO", "Skipping contract because contract STATDES is מבוטל.", {
+        if contract.get('STATDES') == CANCELLED_STATUS:
+            log_json("INFO", "Skipping contract because contract STATDES is cancelled.", {
                 "DOCNO": doc_no
             })
             continue

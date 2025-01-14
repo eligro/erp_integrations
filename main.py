@@ -1,4 +1,4 @@
-# -*- coding: latin-1 -*-
+# -*- coding: utf-8 -*-
 from datetime import datetime, timedelta
 from urllib.parse import quote
 import requests
@@ -80,7 +80,7 @@ def sanitize_phone_number(phone_number):
 # ------------------- SYNC CUSTOMERS -------------------
 def get_priority_customers():
     """Fetch customers from Priority with specific fields."""
-    select_fields = 'CUSTNAME,CUSTDES,HOSTNAME,WTAXNUM,PHONE,FAX,ADDRESS,STATEA,STATENAME,STATE,ZIP'
+    select_fields = 'CUSTNAME,CUSTDES,HOSTNAME,WTAXNUM,PHONE,FAX,ADDRESS,STATDES,STATEA,STATENAME,STATE,ZIP'
     url = f"{PRIORITY_API_URL}/CUSTOMERS?$select={select_fields}"
     response = requests.get(url, auth=(PRIORITY_API_USER, PRIORITY_API_PASSWORD))
     if response.status_code != 200:
@@ -796,8 +796,10 @@ def create_atera_contract(customer_id, contract):
         'Accept': 'application/json'
     }
     # If STATDES == '?????' => set Active = False
-    active = contract.get('STATDES') != "?????"
-
+    active = contract.get('STATDES') != "מבוטל"
+    if not active:
+        log_json("INFO", "Skipping contract with inactive STATDES.", {"contract": contract})
+        return
     # Fall back to a name if UNI_DESC is missing
     contract_name = contract.get('UNI_DESC') or f"Contract {contract.get('DOCNO', '')}"
 
@@ -885,6 +887,13 @@ def get_atera_contract_custom_field(contract_id, field_name):
 
 def sync_contracts():
     log_json("INFO", "Syncing contracts from Priority to Atera...")
+
+    # 1) Get all Priority customers so we can check if customer is active
+    priority_customers_list = get_priority_customers()
+    # Map them by CUSTDES for quick lookup
+    priority_customers_map = {c['CUSTDES']: c for c in priority_customers_list}
+
+    # 2) Fetch relevant contracts
     priority_contracts = get_priority_contracts()
     # priority_contracts = get_priority_contracts_mock()
     if not priority_contracts:
@@ -897,21 +906,43 @@ def sync_contracts():
                  for c in atera_customers if c.get('PriorityCustomerNumber') }
 
     for contract in priority_contracts:
-        priority_customer = contract.get('CUSTNAME')
+        custname = contract.get('CUSTNAME')
+        custdes = contract.get('CUSTDES', '')  # We'll look up the customer by CUSTDES
         doc_no = contract.get('DOCNO')
-        if not priority_customer or not doc_no:
+
+        if not custname or not doc_no:
             log_json("ERROR", "Missing CUSTNAME or DOCNO in contract, skipping", {"contract": contract})
             continue
 
-        customer_id = cust_map.get(priority_customer)
-        if not customer_id:
-            log_json("ERROR", f"No matching Atera customer for Priority {priority_customer}", {"contract": contract})
+        # Check if the Priority customer is active (STATDES == 'פעיל')
+        priority_cust = priority_customers_map.get(custdes)
+        if not priority_cust:
+            log_json("ERROR", "No matching customer in Priority", {"CUSTDES": custdes, "contract": contract})
             continue
 
-        # Fetch all Atera contracts for this customer
-        atera_contracts = get_atera_contracts_for_customer(customer_id)
+        if priority_cust.get('STATDES') != 'פעיל':
+            log_json("INFO", "Skipping contract because customer is not active.", {
+                "CUSTDES": custdes,
+                "contract": contract
+            })
+            continue
 
-        # Check if this Priority contract already exists in Atera by matching DOCNO to custom field
+        # Check if contract itself is active (STATDES != 'מבוטל')
+        if contract.get('STATDES') == 'מבוטל':
+            log_json("INFO", "Skipping contract because contract STATDES is מבוטל.", {
+                "DOCNO": doc_no
+            })
+            continue
+
+        # Map the Priority customer to Atera CustomerID
+        customer_id = cust_map.get(custname)
+        if not customer_id:
+            log_json("ERROR", f"No matching Atera customer for Priority {custname}", {"contract": contract})
+            continue
+
+        # Fetch existing Atera contracts
+        atera_contracts = get_atera_contracts_for_customer(customer_id)
+        # Check if DOCNO exists
         exists = False
         a_contract_id = None
         for a_contract in atera_contracts:

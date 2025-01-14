@@ -2,6 +2,9 @@
 
 from datetime import datetime, timedelta, timezone
 
+import pytest
+from unittest.mock import patch
+
 from main import sync_contracts, sync_customers, sync_contacts, sync_tickets
 
 
@@ -521,3 +524,72 @@ def test_sync_contracts_skip_existing(mocker):
     # Assert we did NOT create a new contract (skip logic)
     mock_create_atera_contract.assert_not_called()
     print("test_sync_contracts_skip_existing passed.")
+
+
+@pytest.fixture
+def priority_customer_fixture(request):
+    """Returns a mock Priority customer object based on param."""
+    # request.param = 'active' or 'inactive'
+    return {
+        'CUSTNAME': 'T003283',
+        'CUSTDES': 'Customer One',
+        'STATDES': 'פעיל' if request.param == 'active' else 'לא פעיל'
+    }
+
+
+@pytest.fixture
+def priority_contract_fixture(request):
+    """Returns a mock Priority contract object based on param."""
+    # request.param = 'active' or 'inactive'
+    return {
+        'CUSTNAME': 'T003283',
+        'CUSTDES': 'Customer One',
+        'DOCNO': 'CONTRACT001',
+        'UDATE': '2025-02-01T00:00:00Z',
+        'VALIDDATE': '2025-02-01T00:00:00Z',
+        'EXPIRYDATE': '2025-12-31T00:00:00Z',
+        'STATDES': 'מבוטל' if request.param == 'inactive' else 'Active',
+        'UNI_DESC': 'Sample Contract'
+    }
+
+
+@pytest.mark.parametrize("priority_customer_fixture", ["active", "inactive"], indirect=True)
+@pytest.mark.parametrize("priority_contract_fixture", ["active", "inactive"], indirect=True)
+def test_sync_contracts(
+        priority_customer_fixture,
+        priority_contract_fixture
+):
+    """
+    4 combos:
+     1) Active cust + Active contract => expect create
+     2) Active cust + Inactive contract => skip
+     3) Inactive cust + Active contract => skip
+     4) Inactive cust + Inactive contract => skip
+    """
+
+    # Setup Mocks
+    with patch("main.get_priority_customers") as mock_get_customers, \
+            patch("main.get_priority_contracts") as mock_get_contracts, \
+            patch("main.get_atera_customers") as mock_get_atera_customers, \
+            patch("main.create_atera_contract") as mock_create_atera_contract, \
+            patch("main.get_atera_contracts_for_customer", return_value=[]):
+
+        # Mock returned data
+        mock_get_customers.return_value = [priority_customer_fixture]
+        mock_get_contracts.return_value = [priority_contract_fixture]
+        mock_get_atera_customers.return_value = [{
+            'CustomerID': 1234,
+            'PriorityCustomerNumber': 'T003283'
+        }]
+
+        # Run the sync
+        sync_contracts()
+
+        customer_status = priority_customer_fixture['STATDES']
+        contract_status = priority_contract_fixture['STATDES']
+
+        # Only if customer_status == "פעיל" AND contract_status != "מבוטל" => create
+        if customer_status == 'פעיל' and contract_status != 'מבוטל':
+            mock_create_atera_contract.assert_called_once()
+        else:
+            mock_create_atera_contract.assert_not_called()

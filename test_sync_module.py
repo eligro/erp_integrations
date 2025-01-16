@@ -1,5 +1,3 @@
-# test_sync_module.py
-
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -593,3 +591,84 @@ def test_sync_contracts(
             mock_create_atera_contract.assert_called_once()
         else:
             mock_create_atera_contract.assert_not_called()
+
+
+def test_sync_customers_filtered_by_date(mocker):
+    """
+    Test that only customers with MARH_UDATE in the last CUSTOMERS_PULL_PERIOD_DAYS
+    are returned and processed by sync_customers().
+    """
+    # Suppose CUSTOMERS_PULL_PERIOD_DAYS=2
+    cutoff = datetime.utcnow().replace(tzinfo=timezone.utc) - timedelta(days=2)
+
+    # We'll create two customers: one updated recently, one too old
+    recent_update = datetime.utcnow().replace(tzinfo=timezone.utc).isoformat()
+    old_update = (datetime.utcnow().replace(tzinfo=timezone.utc) - timedelta(days=10)).isoformat()
+
+    priority_customers_response = {
+        'totalPages': 1,
+        'value': [
+            {
+                'CUSTNAME': 'RECENT001',
+                'CUSTDES': 'Recent Customer',
+                'MARH_UDATE': recent_update,
+                'PHONE': '111-222-3333',
+                'ADDRESS': '123 Main St',
+            },
+            {
+                'CUSTNAME': 'OLD001',
+                'CUSTDES': 'Old Customer',
+                'MARH_UDATE': old_update,
+                'PHONE': '999-888-7777',
+                'ADDRESS': '999 Old Rd',
+            }
+        ]
+    }
+
+    # Atera has no customers yet
+    atera_customers_response = {
+        'totalPages': 1,
+        'items': []
+    }
+
+    # Mock GET calls
+    def mock_get_side_effect(url, *args, **kwargs):
+        if 'CUSTOMERS' in url:
+            # Return both customers from Priority
+            response = mocker.MagicMock()
+            response.status_code = 200
+            response.json.return_value = priority_customers_response
+            return response
+        elif 'app.atera.com/api/v3/customers' in url and 'customerfield' not in url:
+            response = mocker.MagicMock()
+            response.status_code = 200
+            response.json.return_value = atera_customers_response
+            return response
+        elif 'customerfield' in url:
+            # Custom field doesn't exist
+            response = mocker.MagicMock()
+            response.status_code = 404
+            return response
+        else:
+            raise ValueError(f"Unhandled URL in test: {url}")
+
+    mocker.patch('main.requests.get', side_effect=mock_get_side_effect)
+    mock_post = mocker.patch('main.requests.post')
+    mock_put = mocker.patch('main.requests.put')
+    mock_post.return_value = mocker.MagicMock(status_code=201, json=lambda: {'ActionID': 123})
+    mock_put.return_value = mocker.MagicMock(status_code=200)
+
+    # Run sync_customers
+    sync_customers()
+
+    # We should see creation for only the recent customer, not the old one
+    create_calls = [
+        call for call in mock_post.call_args_list
+        if call.args[0] == "https://app.atera.com/api/v3/customers"
+    ]
+    assert len(create_calls) == 1, "Expected to create only 1 new customer (the recent one)."
+
+    # Check that the created one is 'Recent Customer'
+    data = create_calls[0].kwargs['json']
+    assert data['CustomerName'] == 'Recent Customer'
+    print("test_sync_customers_filtered_by_date passed.")

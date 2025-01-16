@@ -63,6 +63,10 @@ SYNC_SERVICE_CALLS = bool(int(config.get('SYNC_SERVICE_CALLS', 0)))
 SYNC_TICKETS = bool(int(config.get('SYNC_TICKETS', 0)))  # New sync option
 DAYS_BACK_TICKETS = int(config.get('DAYS_BACK_TICKETS', 2))  # Days back to fetch tickets
 PULL_PERIOD_DAYS = int(config.get('PULL_PERIOD_DAYS', 2))
+
+# New config for filtering updated customers by MARH_UDATE
+CUSTOMERS_PULL_PERIOD_DAYS = int(config.get('CUSTOMERS_PULL_PERIOD_DAYS', 2))
+
 CANCELLED_CONTRACT_STATUS_HEBREW = config.get('CANCELLED_CONTRACT_STATUS_HEBREW')
 ACTIVE_CUSTOMER_STATUS_HEBREW = config.get('ACTIVE_CUSTOMER_STATUS_HEBREW')
 # ------------------- PHONE NUMBER SANITIZATION -------------------
@@ -80,14 +84,34 @@ def sanitize_phone_number(phone_number):
 
 # ------------------- SYNC CUSTOMERS -------------------
 def get_priority_customers():
-    """Fetch customers from Priority with specific fields."""
-    select_fields = 'CUSTNAME,CUSTDES,HOSTNAME,WTAXNUM,PHONE,FAX,ADDRESS,STATDES,STATEA,STATENAME,STATE,ZIP'
+    """Fetch customers from Priority with specific fields and filter by MARH_UDATE."""
+    select_fields = 'CUSTNAME,CUSTDES,HOSTNAME,WTAXNUM,PHONE,FAX,ADDRESS,STATDES,STATEA,STATENAME,STATE,ZIP,MARH_UDATE'
     url = f"{PRIORITY_API_URL}/CUSTOMERS?$select={select_fields}"
     response = requests.get(url, auth=(PRIORITY_API_USER, PRIORITY_API_PASSWORD))
     if response.status_code != 200:
         log_json("ERROR", f"Error fetching Priority customers: {response.status_code}", {"response": response.text})
     response.raise_for_status()
-    return response.json()['value']
+    all_customers = response.json()['value']
+
+    # Filter by MARH_UDATE in the last CUSTOMERS_PULL_PERIOD_DAYS
+    cutoff = datetime.utcnow() - timedelta(days=CUSTOMERS_PULL_PERIOD_DAYS)
+    filtered_customers = []
+    for cust in all_customers:
+        try:
+            udate_str = cust.get('MARH_UDATE')
+            if not udate_str:
+                # If there's no MARH_UDATE, skip or treat as never updated
+                continue
+            if '+' in udate_str:
+                udate_str = udate_str.split('+')[0]
+            elif 'Z' in udate_str:
+                udate_str = udate_str.replace('Z', '')
+            cust_udate = datetime.fromisoformat(udate_str)
+            if cust_udate >= cutoff:
+                filtered_customers.append(cust)
+        except Exception as e:
+            log_json("ERROR", "Error parsing MARH_UDATE", {"exception": str(e), "customer": cust})
+    return filtered_customers
 
 def get_atera_customers(fetch_custom_fields=True):
     """Fetch all existing customers from Atera and their 'Priority Customer Number' custom field."""
@@ -530,8 +554,6 @@ def get_atera_tickets(days_back):
                     created_date = datetime.fromisoformat(created_date_str.replace("Z", ""))
                 else:
                     created_date = datetime.fromisoformat(created_date_str)
-                print(created_date)
-                print(cutoff_date)
                 if created_date >= cutoff_date:
                     tickets.append(ticket)
         if not data.get('nextLink'):

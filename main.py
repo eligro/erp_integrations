@@ -83,7 +83,7 @@ def sanitize_phone_number(phone_number):
         return None
 
 # ------------------- SYNC CUSTOMERS -------------------
-def get_priority_customers():
+def get_priority_customers(filter_by_date=True):
     """Fetch customers from Priority with specific fields and filter by MARH_UDATE."""
     select_fields = 'CUSTNAME,CUSTDES,HOSTNAME,WTAXNUM,PHONE,FAX,ADDRESS,STATDES,STATEA,STATENAME,STATE,ZIP,MARH_UDATE'
     url = f"{PRIORITY_API_URL}/CUSTOMERS?$select={select_fields}"
@@ -92,6 +92,9 @@ def get_priority_customers():
         log_json("ERROR", f"Error fetching Priority customers: {response.status_code}", {"response": response.text})
     response.raise_for_status()
     all_customers = response.json()['value']
+
+    if not filter_by_date:
+        return all_customers
 
     # Filter by MARH_UDATE in the last CUSTOMERS_PULL_PERIOD_DAYS
     cutoff = datetime.utcnow() - timedelta(days=CUSTOMERS_PULL_PERIOD_DAYS)
@@ -912,7 +915,7 @@ def sync_contracts():
     log_json("INFO", "Syncing contracts from Priority to Atera...")
 
     # 1) Get all Priority customers so we can check if customer is active
-    priority_customers_list = get_priority_customers()
+    priority_customers_list = get_priority_customers(filter_by_date=False)
     # Map them by CUSTDES for quick lookup
     priority_customers_map = {c['CUSTDES']: c for c in priority_customers_list}
 

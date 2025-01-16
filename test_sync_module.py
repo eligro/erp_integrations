@@ -1,10 +1,8 @@
 from datetime import datetime, timedelta, timezone
-
 import pytest
-from unittest.mock import patch
+from unittest.mock import patch, call
 
 from main import sync_contracts, sync_customers, sync_contacts, sync_tickets
-
 
 # Test for syncing customers
 def test_sync_customers_update(mocker):
@@ -17,12 +15,16 @@ def test_sync_customers_update(mocker):
                 'PHONE': '1234567890',
                 'ADDRESS': '123 Main St',
                 'STATE': 'CA',
-                'ZIP': '90001'
+                'ZIP': '90001',
+                'MARH_UDATE': datetime.utcnow().isoformat() + 'Z'  # Add MARH_UDATE
             }
         ]
     }
 
     atera_customer = {
+        'totalPages': 1,
+        'totalItemCount': 1,
+        'itemsInPage': 1,
         'items': [
             {
                 'CustomerID': 1,
@@ -65,7 +67,7 @@ def test_sync_customers_update(mocker):
     expected_put_url = "https://app.atera.com/api/v3/customers/1"
     mock_put.assert_any_call(
         expected_put_url,
-        headers=mocker.ANY,
+        headers={'X-Api-Key': mocker.ANY, 'Content-Type': 'application/json', 'Accept': 'application/json'},
         json={
             "CustomerName": "Customer One",
             "BusinessNumber": "",
@@ -88,7 +90,7 @@ def test_sync_customers_update(mocker):
     expected_custom_field_url = "https://app.atera.com/api/v3/customvalues/customerfield/1/Priority%20Customer%20Number"
     mock_put.assert_any_call(
         expected_custom_field_url,
-        headers=mocker.ANY,
+        headers={'X-Api-Key': mocker.ANY, 'Content-Type': 'application/json', 'Accept': 'text/html'},
         json={"Value": "CUST001"}
     )
 
@@ -101,7 +103,8 @@ def test_sync_customers_update(mocker):
                 'PHONE': '0987654321',  # Changed phone number
                 'ADDRESS': '123 Main St',
                 'STATE': 'CA',
-                'ZIP': '90001'
+                'ZIP': '90001',
+                'MARH_UDATE': datetime.utcnow().isoformat() + 'Z'  # Add MARH_UDATE
             }
         ]
     }
@@ -115,6 +118,9 @@ def test_sync_customers_update(mocker):
             return response
         elif url == "https://app.atera.com/api/v3/customers":
             updated_atera_customer = {
+                'totalPages': 1,
+                'totalItemCount': 1,
+                'itemsInPage': 1,
                 'items': [
                     {
                         'CustomerID': 1,
@@ -147,7 +153,7 @@ def test_sync_customers_update(mocker):
     # Verify that the customer was updated with new phone number
     mock_put.assert_any_call(
         expected_put_url,
-        headers=mocker.ANY,
+        headers={'X-Api-Key': mocker.ANY, 'Content-Type': 'application/json', 'Accept': 'application/json'},
         json={
             "CustomerName": "Customer One",
             "BusinessNumber": "",
@@ -168,9 +174,11 @@ def test_sync_customers_update(mocker):
 
     print("Customer sync test passed.")
 
-
 # Test for syncing contacts
 def test_sync_contacts_create_partial(mocker):
+    # Mock Priority API URL
+    mocker.patch('main.PRIORITY_API_URL', 'http://test-priority-api')
+
     # Define test data
     priority_contacts = {
         'value': [
@@ -178,6 +186,7 @@ def test_sync_contacts_create_partial(mocker):
                 'CUSTNAME': 'CUST001',
                 'CUSTDES': 'Customer One',
                 'EMAIL': '',  # Missing email
+                'NAME': 'Alice',  # Use NAME instead of FIRSTNAME/LASTNAME
                 'FIRSTNAME': 'Alice',
                 'LASTNAME': '',  # Missing last name
                 'POSITIONDES': 'Manager',
@@ -188,6 +197,7 @@ def test_sync_contacts_create_partial(mocker):
                 'CUSTNAME': 'CUST001',
                 'CUSTDES': 'Customer One',
                 'EMAIL': 'bob@example.com',
+                'NAME': 'Bob Smith',  # Use NAME instead of FIRSTNAME/LASTNAME
                 'FIRSTNAME': '',
                 'LASTNAME': 'Smith',  # Missing first name
                 'POSITIONDES': 'Engineer',
@@ -198,7 +208,8 @@ def test_sync_contacts_create_partial(mocker):
                 'CUSTNAME': 'CUST001',
                 'CUSTDES': 'Customer One',
                 'EMAIL': '',  # Missing email
-                'FIRSTNAME': '',  # Missing both names
+                'NAME': '',  # Missing both names
+                'FIRSTNAME': '',
                 'LASTNAME': '',
                 'POSITIONDES': 'Technician',
                 'PHONENUM': '',
@@ -208,6 +219,9 @@ def test_sync_contacts_create_partial(mocker):
     }
 
     atera_customers = {
+        'totalPages': 1,
+        'totalItemCount': 1,
+        'itemsInPage': 1,
         'items': [
             {
                 'CustomerID': 1,
@@ -218,7 +232,10 @@ def test_sync_contacts_create_partial(mocker):
     }
 
     atera_contacts = {
-        'items': []
+        'items': [],
+        'totalPages': 1,
+        'totalItemCount': 0,
+        'itemsInPage': 0
     }
 
     # Mock responses for requests.get
@@ -239,9 +256,9 @@ def test_sync_contacts_create_partial(mocker):
             response.json.return_value = atera_customers
             return response
         elif url.startswith("https://app.atera.com/api/v3/customvalues/customerfield/"):
-            # Return a response indicating that the custom field is not found
             response = mocker.MagicMock()
-            response.status_code = 404
+            response.status_code = 200
+            response.json.return_value = [{'ValueAsString': 'CUST001'}]
             return response
         else:
             raise ValueError(f"Unhandled URL: {url}")
@@ -270,12 +287,11 @@ def test_sync_contacts_create_partial(mocker):
 
     # Check data for second contact (Smith)
     data_smith = create_calls[1].kwargs['json']
-    assert data_smith['Firstname'] == ''  # First name missing
+    assert data_smith['Firstname'] == 'Bob Smith'  # First name missing
     assert data_smith['Lastname'] == 'Smith'
     assert data_smith['Email'] == 'bob@example.com'  # Provided email
 
     print("Contacts sync test passed.")
-
 
 def test_sync_tickets(mocker):
     # Configure the cutoff date
@@ -292,7 +308,8 @@ def test_sync_tickets(mocker):
                 "CustomerID": 10,
                 "TicketCreatedDate": recent_date_str,
                 "OnSiteDurationMinutes": 120,
-                "OffSiteDurationMinutes": 30
+                "OffSiteDurationMinutes": 30,
+                "TicketStatus": "Active"
             }
         ],
         "totalItemCount": 1,
@@ -311,12 +328,15 @@ def test_sync_tickets(mocker):
                 "CustomerName": "Test Customer",
                 "PriorityCustomerNumber": "CUST002"
             }
-        ]
+        ],
+        "totalPages": 1,
+        "totalItemCount": 1,
+        "itemsInPage": 1
     }
 
     # Mock GET requests
     def mock_get_side_effect(url, *args, **kwargs):
-        if "tickets" in url:
+        if "tickets" in url and not "ticketfield" in url:
             # Tickets from Atera
             response = mocker.MagicMock()
             response.status_code = 200
@@ -330,10 +350,18 @@ def test_sync_tickets(mocker):
             return response
         elif "customerfield" in url:
             # Custom field fetch
-            # If needed, return a response indicating field found
             response = mocker.MagicMock()
             response.status_code = 200
             response.json.return_value = [{'ValueAsString': 'CUST002'}]
+            return response
+        elif "ticketfield" in url:
+            # Handle ticket custom field requests
+            response = mocker.MagicMock()
+            response.status_code = 200
+            if "Technician%20Billable%20Hours" in url:
+                response.json.return_value = [{'ValueAsString': '2.5'}]
+            elif "Payment" in url:
+                response.json.return_value = [{'ValueAsString': 'Regular'}]
             return response
         else:
             raise ValueError(f"Unhandled URL: {url}")
@@ -352,19 +380,15 @@ def test_sync_tickets(mocker):
     sync_tickets()
 
     # Check that a POST request was made to Priority
-    # The endpoint for Priority: {PRIORITY_API_URL}/MARH_LOADATERA
-    # The data should have CUSTNAME, DOCNO, TQUANT
-    # Calculated TQUANT = (OnSiteDurationMinutes + OffSiteDurationMinutes) / 60.0
-    # = (120 + 30) / 60 = 2.5
     expected_data = {
         "CUSTNAME": "CUST002",
-        "DOCNO": "123",
-        "TQUANT": 2.5
+        "ATERADOCNO": "123",
+        "TQUANT": 2.5,
+        "ATERASTATUS": "Active",
+        "ATERATICKETTYPE": "Regular"
     }
 
     # Verify the call was made with the expected data
-    # Since we don't know the actual PRIORITY_API_URL from the test context,
-    # we can assert that the post was called with a URL ending with 'MARH_LOADATERA'
     priority_call = None
     for call in mock_post.call_args_list:
         url = call.args[0]
@@ -376,12 +400,13 @@ def test_sync_tickets(mocker):
     assert priority_call.kwargs['json'] == expected_data, "Data sent to Priority does not match expected."
     print("Tickets sync test passed.")
 
-
 def test_sync_contracts_create_new(mocker):
     """
     Test that a new contract from Priority is created in Atera
     if no matching 'Priority Contract Number' is found.
     """
+    # Mock Priority API URL
+    mocker.patch('main.PRIORITY_API_URL', 'http://test-priority-api')
 
     # Priority contracts (one contract) - updated recently
     priority_contracts = {
@@ -398,6 +423,15 @@ def test_sync_contracts_create_new(mocker):
             }
         ]
     }
+
+    # Mock Priority customers
+    priority_customers = [
+        {
+            'CUSTNAME': 'CUST001',
+            'CUSTDES': 'Customer One',
+            'STATDES': 'פעיל'  # Active in Hebrew
+        }
+    ]
 
     # Atera customers (matching Priority customer)
     atera_customers = {
@@ -422,6 +456,10 @@ def test_sync_contracts_create_new(mocker):
     mock_get_priority_contracts = mocker.patch('main.get_priority_contracts')
     mock_get_priority_contracts.return_value = priority_contracts['value']
 
+    # Mock fetch Priority customers
+    mock_get_priority_customers = mocker.patch('main.get_priority_customers')
+    mock_get_priority_customers.return_value = priority_customers
+
     # Mock get Atera customers
     mock_get_atera_customers = mocker.patch('main.get_atera_customers')
     mock_get_atera_customers.return_value = atera_customers['items']
@@ -444,12 +482,13 @@ def test_sync_contracts_create_new(mocker):
     assert contract_arg['DOCNO'] == 'CONTRACT001'
     print("test_sync_contracts_create_new passed.")
 
-
 def test_sync_contracts_skip_existing(mocker):
     """
     Test that if the contract's DOCNO already exists in Atera (via custom field),
     we skip creating a new one.
     """
+    # Mock Priority API URL
+    mocker.patch('main.PRIORITY_API_URL', 'http://test-priority-api')
 
     # Priority contracts (one contract) - updated recently
     priority_contracts = {
@@ -466,6 +505,15 @@ def test_sync_contracts_skip_existing(mocker):
             }
         ]
     }
+
+    # Mock Priority customers
+    priority_customers = [
+        {
+            'CUSTNAME': 'CUST001',
+            'CUSTDES': 'Customer One',
+            'STATDES': 'פעיל'  # Active in Hebrew
+        }
+    ]
 
     # Atera customers
     atera_customers = {
@@ -495,6 +543,10 @@ def test_sync_contracts_skip_existing(mocker):
     mock_get_priority_contracts = mocker.patch('main.get_priority_contracts')
     mock_get_priority_contracts.return_value = priority_contracts['value']
 
+    # Mock fetch Priority customers
+    mock_get_priority_customers = mocker.patch('main.get_priority_customers')
+    mock_get_priority_customers.return_value = priority_customers
+
     # Mock get Atera customers
     mock_get_atera_customers = mocker.patch('main.get_atera_customers')
     mock_get_atera_customers.return_value = atera_customers['items']
@@ -523,7 +575,6 @@ def test_sync_contracts_skip_existing(mocker):
     mock_create_atera_contract.assert_not_called()
     print("test_sync_contracts_skip_existing passed.")
 
-
 @pytest.fixture
 def priority_customer_fixture(request):
     """Returns a mock Priority customer object based on param."""
@@ -533,7 +584,6 @@ def priority_customer_fixture(request):
         'CUSTDES': 'Customer One',
         'STATDES': 'פעיל' if request.param == 'active' else 'לא פעיל'
     }
-
 
 @pytest.fixture
 def priority_contract_fixture(request):
@@ -549,7 +599,6 @@ def priority_contract_fixture(request):
         'STATDES': 'מבוטל' if request.param == 'inactive' else 'Active',
         'UNI_DESC': 'Sample Contract'
     }
-
 
 @pytest.mark.parametrize("priority_customer_fixture", ["active", "inactive"], indirect=True)
 @pytest.mark.parametrize("priority_contract_fixture", ["active", "inactive"], indirect=True)
@@ -592,7 +641,6 @@ def test_sync_contracts(
         else:
             mock_create_atera_contract.assert_not_called()
 
-
 def test_sync_customers_filtered_by_date(mocker):
     """
     Test that only customers with MARH_UDATE in the last CUSTOMERS_PULL_PERIOD_DAYS
@@ -628,6 +676,8 @@ def test_sync_customers_filtered_by_date(mocker):
     # Atera has no customers yet
     atera_customers_response = {
         'totalPages': 1,
+        'totalItemCount': 0,
+        'itemsInPage': 0,
         'items': []
     }
 

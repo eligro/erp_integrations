@@ -181,7 +181,6 @@ def create_atera_customer(customer):
         "CustomerName": customer['CUSTDES'],
         "CreatedOn": datetime.utcnow().isoformat() + "Z",
         "BusinessNumber": customer.get('BUSINESSNUMBER', ''),
-        "Domain": customer.get('DOMAIN', ''),
         "Address": customer.get('ADDRESS', ''),
         "City": customer.get('CITY', ''),
         "State": customer.get('STATENAME', ''),
@@ -218,7 +217,6 @@ def update_atera_customer(customer_id, customer):
     data = {
         "CustomerName": customer['CUSTDES'],
         "BusinessNumber": customer.get('BUSINESSNUMBER', ''),
-        "Domain": customer.get('DOMAIN', ''),
         "Address": customer.get('ADDRESS', ''),
         "City": customer.get('CITY', ''),
         "State": customer.get('STATENAME', ''),

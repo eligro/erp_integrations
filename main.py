@@ -545,17 +545,21 @@ def get_atera_tickets(days_back):
         if not fetched_items:
             break
         for ticket in fetched_items:
-            created_date_str = ticket.get('TicketCreatedDate')
-            if created_date_str:
-                if "+" in created_date_str:
+            # Only include Closed tickets
+            if ticket.get('TicketStatus') != "Closed":
+                continue
+                
+            resolved_date_str = ticket.get('TicketResolvedDate')
+            if resolved_date_str:
+                if "+" in resolved_date_str:
                     # remove the offset part
-                    created_date = datetime.fromisoformat(created_date_str.split("+")[0])
-                elif "Z" in created_date_str:
+                    resolved_date = datetime.fromisoformat(resolved_date_str.split("+")[0])
+                elif "Z" in resolved_date_str:
                     # remove the Z part
-                    created_date = datetime.fromisoformat(created_date_str.replace("Z", ""))
+                    resolved_date = datetime.fromisoformat(resolved_date_str.replace("Z", ""))
                 else:
-                    created_date = datetime.fromisoformat(created_date_str)
-                if created_date >= cutoff_date:
+                    resolved_date = datetime.fromisoformat(resolved_date_str)
+                if resolved_date >= cutoff_date:
                     tickets.append(ticket)
         if not data.get('nextLink'):
             break
@@ -1023,4 +1027,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

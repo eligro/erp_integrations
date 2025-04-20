@@ -714,6 +714,15 @@ def sync_tickets():
         # Fetch the custom field Technician Billable Hours
         tech_hours_str = get_atera_ticket_custom_field(ticket.get('TicketID'), "Technician Billable Hours")
         payment_type = get_atera_ticket_custom_field(ticket.get('TicketID'), "Payment")
+        
+        # Only process tickets with "Full Payment" or "Payment After Hours"
+        if payment_type not in ["Full Payment", "Payment After Hours"]:
+            log_json("INFO", "Skipping ticket due to payment type filter.", {
+                "TicketID": ticket.get('TicketID'),
+                "PaymentType": payment_type
+            })
+            continue
+            
         if not tech_hours_str:
             # Fall back to 0 if missing or error
             tquant = 0

@@ -566,7 +566,7 @@ def get_atera_tickets(days_back):
         page += 1
     return tickets
 
-def send_ticket_to_priority(custname, docno, tquant, ticket_status, payment_type):
+def send_ticket_to_priority(custname, docno, tquant, ticket_status, payment_type, technician_name):
     # POST to Priority endpoint MARH_LOADATERA
     url = f"{PRIORITY_API_URL}/MARH_LOADATERA"
     headers = {
@@ -579,6 +579,7 @@ def send_ticket_to_priority(custname, docno, tquant, ticket_status, payment_type
         "TQUANT": tquant,
         "ATERASTATUS": ticket_status,
         "ATERATICKETTYPE": payment_type,
+        "MARH_ASSIGNTECHNICIA": technician_name,
     }
     response = requests.post(url, headers=headers, auth=auth, json=data)
     if response.status_code not in [200, 201]:
@@ -739,7 +740,10 @@ def sync_tickets():
                 })
                 tquant = 0
 
-        send_ticket_to_priority(custname, docno, tquant, ticket_status, payment_type)
+        # Get the technician's full name from the ticket
+        technician_name = ticket.get('TechnicianFullName', '')
+        
+        send_ticket_to_priority(custname, docno, tquant, ticket_status, payment_type, technician_name)
 
 
 def get_priority_contracts_mock():

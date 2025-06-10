@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from urllib.parse import quote
 import requests
 import logging
@@ -21,7 +21,7 @@ logging.basicConfig(
 # Helper function to log messages in JSON format
 def log_json(level, message, data=None):
     log_entry = {
-        "timestamp": datetime.now(timezone.utc).isoformat() + "Z",
+        "timestamp": datetime.utcnow().isoformat() + "Z",
         "level": level,
         "message": message
     }
@@ -97,7 +97,7 @@ def get_priority_customers(filter_by_date=True):
         return all_customers
 
     # Filter by MARH_UDATE in the last CUSTOMERS_PULL_PERIOD_DAYS
-    cutoff = datetime.now(timezone.utc) - timedelta(days=CUSTOMERS_PULL_PERIOD_DAYS)
+    cutoff = datetime.utcnow() - timedelta(days=CUSTOMERS_PULL_PERIOD_DAYS)
     filtered_customers = []
     for cust in all_customers:
         try:
@@ -185,7 +185,7 @@ def create_atera_customer(customer):
     }
     data = {
         "CustomerName": customer['CUSTDES'],
-        "CreatedOn": datetime.now(timezone.utc).isoformat() + "Z",
+        "CreatedOn": datetime.utcnow().isoformat() + "Z",
         "BusinessNumber": customer.get('BUSINESSNUMBER', ''),
         "Address": customer.get('ADDRESS', ''),
         "City": customer.get('CITY', ''),
@@ -462,7 +462,7 @@ def create_atera_contact(customer_id, contact):
         "MobilePhone": contact.get('CELLPHONE', ''),
         "IsContactPerson": True,
         "InIgnoreMode": False,
-        "CreatedOn": datetime.now(timezone.utc).isoformat() + "Z"
+        "CreatedOn": datetime.utcnow().isoformat() + "Z"
     }
 
     response = requests.post(url, headers=headers, json=data)
@@ -535,7 +535,7 @@ def get_atera_tickets(days_back):
     tickets = []
     page = 1
     items_in_page = 50
-    cutoff_date = datetime.now(timezone.utc) - timedelta(days=days_back)
+    cutoff_date = datetime.utcnow() - timedelta(days=days_back)
     while True:
         params = {
             'page': page,
@@ -758,7 +758,7 @@ def get_priority_contracts_mock():
             'CUSTNAME': 'T003283',
             'CUSTDES': 'Customer One',
             'DOCNO': 'CONTRACT001',
-            'UDATE': datetime.now(timezone.utc).isoformat() + 'Z',  # updated now
+            'UDATE': datetime.utcnow().isoformat() + 'Z',  # updated now
             'VALIDDATE': '2025-02-01T00:00:00Z',
             'EXPIRYDATE': '2025-12-31T00:00:00Z',
             'STATDES': 'Active',
@@ -779,7 +779,7 @@ def get_priority_contracts():
     all_contracts = response.json().get('value', [])
 
     # Filter by UDATE in last PULL_PERIOD_DAYS
-    cutoff = datetime.now(timezone.utc) - timedelta(days=PULL_PERIOD_DAYS)
+    cutoff = datetime.utcnow() - timedelta(days=PULL_PERIOD_DAYS)
     filtered = []
     for c in all_contracts:
         try:

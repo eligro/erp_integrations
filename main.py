@@ -623,26 +623,50 @@ def get_atera_customer_custom_field(customer_id, field_name):
     Fetch a single custom field by name for a given Atera customer_id.
     Returns the field's value or None if 404 or field does not exist.
     """
-    url = f"https://app.atera.com/api/v3/customvalues/customerfield/{customer_id}/{quote(field_name)}"
-    headers = {
-        'X-Api-Key': ATERA_API_KEY,
-        'Accept': 'application/json'
-    }
-    response = requests.get(url, headers=headers)
-    if response.status_code == 404:
-        # Custom field not found
-        return None
-    if response.status_code != 200:
-        log_json("ERROR", f"Error fetching custom field '{field_name}' for customer ID {customer_id}", {
-            "status_code": response.status_code,
-            "response": response.text
+    try:
+        url = f"https://app.atera.com/api/v3/customvalues/customerfield/{customer_id}/{quote(field_name)}"
+        headers = {
+            'X-Api-Key': ATERA_API_KEY,
+            'Accept': 'application/json'
+        }
+        response = requests.get(url, headers=headers)
+        if response.status_code == 404:
+            # Custom field not found
+            log_json("INFO", f"Custom field '{field_name}' not found for customer ID {customer_id}")
+            return None
+        if response.status_code != 200:
+            log_json("ERROR", f"Error fetching custom field '{field_name}' for customer ID {customer_id}", {
+                "status_code": response.status_code,
+                "response": response.text
+            })
+            response.raise_for_status()
+        
+        # According to Atera docs, the response should be a list with at least one item:
+        data = response.json()
+        if not data:
+            log_json("INFO", f"Empty response for custom field '{field_name}' for customer ID {customer_id}")
+            return None
+        
+        # Check if first item exists and is not None
+        if len(data) == 0 or data[0] is None:
+            log_json("INFO", f"No data or null data for custom field '{field_name}' for customer ID {customer_id}")
+            return None
+        
+        # Safely get the ValueAsString
+        if isinstance(data[0], dict) and 'ValueAsString' in data[0]:
+            return data[0].get('ValueAsString')
+        else:
+            log_json("INFO", f"Invalid data structure for custom field '{field_name}' for customer ID {customer_id}", {
+                "data": data[0] if len(data) > 0 else None
+            })
+            return None
+            
+    except Exception as e:
+        log_json("ERROR", f"Exception occurred while fetching custom field '{field_name}' for customer ID {customer_id}", {
+            "exception": str(e),
+            "exception_type": type(e).__name__
         })
-        response.raise_for_status()
-    # According to Atera docs, the response should be a list with at least one item:
-    data = response.json()
-    if not data:
         return None
-    return data[0].get('ValueAsString')
 
 def get_atera_ticket_custom_field(ticket_id, field_name):
     """Fetch a custom field value for a given ticket."""

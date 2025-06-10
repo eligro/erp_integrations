@@ -163,7 +163,7 @@ def get_atera_custom_field(customer_id, field_name):
     response = requests.get(url, headers=headers)
     if response.status_code == 200:
         data = response.json()
-        if data and len(data) > 0 and 'ValueAsString' in data[0]:
+        if data and len(data) > 0 and data[0] is not None and 'ValueAsString' in data[0]:
             return data[0]['ValueAsString']
         else:
             log_json("INFO", f"Custom field '{field_name}' not found or empty for customer", {"customer_id": customer_id})

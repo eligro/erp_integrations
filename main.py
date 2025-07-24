@@ -284,6 +284,11 @@ def sync_customers():
 
     log_json("INFO", f"Atera customers by ID", {"atera_customer_id_map": atera_customer_id_map})
 
+    # Track customer sync actions for summary log
+    customers_updated_by_id = []
+    customers_updated_by_name = []
+    customers_created = []
+
     for customer in priority_customers:
         priority_customer_number = customer['CUSTNAME']
         priority_customer_name = customer.get('CUSTDES', '').strip().lower()
@@ -297,6 +302,11 @@ def sync_customers():
             # Customer exists in both systems by ID, perform an update
             log_json("INFO", f"Found matching customer in Atera by ID. Updating customer.", {"CUSTDES": customer['CUSTDES'], "CustomerID": customer_id})
             update_atera_customer(customer_id, customer)
+            customers_updated_by_id.append({
+                "priority_id": priority_customer_number,
+                "atera_id": customer_id,
+                "name": customer['CUSTDES']
+            })
         else:
             # Try to find the customer in Atera by name
             customer_id = atera_customer_name_map.get(priority_customer_name)
@@ -304,11 +314,59 @@ def sync_customers():
                 # Customer exists in Atera by name, perform an update and set the Priority Customer Number
                 log_json("INFO", f"Found matching customer in Atera by name. Updating customer.", {"CUSTDES": customer['CUSTDES'], "CustomerID": customer_id})
                 update_atera_customer(customer_id, customer)
+                customers_updated_by_name.append({
+                    "priority_id": priority_customer_number,
+                    "atera_id": customer_id,
+                    "name": customer['CUSTDES']
+                })
             else:
                 # Customer does not exist in Atera, create it
                 log_json("INFO", f"No matching customer found in Atera. Creating customer.", {"CUSTDES": customer['CUSTDES']})
                 result = create_atera_customer(customer)
                 log_json("INFO", f"Customer created in Atera.", {"CUSTDES": customer['CUSTDES'], "ActionID": result['ActionID']})
+                customers_created.append({
+                    "priority_id": priority_customer_number,
+                    "name": customer['CUSTDES']
+                })
+
+    # Get all Priority customers to find those filtered by date
+    all_priority_customers = get_priority_customers(filter_by_date=False)
+    priority_ids_processed = {c['CUSTNAME'] for c in priority_customers}
+    customers_filtered_by_date = []
+    
+    for customer in all_priority_customers:
+        if customer['CUSTNAME'] not in priority_ids_processed:
+            customers_filtered_by_date.append({
+                "priority_id": customer['CUSTNAME'],
+                "name": customer.get('CUSTDES', ''),
+                "last_update": customer.get('MARH_UDATE', '')
+            })
+
+    # Create summary log
+    summary = {
+        "total_priority_customers_processed": len(priority_customers),
+        "total_priority_customers_in_system": len(all_priority_customers),
+        "customers_updated_by_id": {
+            "count": len(customers_updated_by_id),
+            "customers": customers_updated_by_id
+        },
+        "customers_updated_by_name": {
+            "count": len(customers_updated_by_name),
+            "customers": customers_updated_by_name
+        },
+        "customers_created": {
+            "count": len(customers_created),
+            "customers": customers_created
+        },
+        "customers_filtered_by_date": {
+            "count": len(customers_filtered_by_date),
+            "info": f"Not processed because not updated in last {CUSTOMERS_PULL_PERIOD_DAYS} days",
+            "customers": customers_filtered_by_date[:100] if len(customers_filtered_by_date) > 100 else customers_filtered_by_date,
+            "note": "Showing first 100 only" if len(customers_filtered_by_date) > 100 else "Showing all"
+        }
+    }
+    
+    log_json("INFO", "Customer sync summary", summary)
 
 # ------------------- SYNC CONTACTS -------------------
 def get_priority_contacts():

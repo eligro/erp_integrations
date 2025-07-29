@@ -387,7 +387,7 @@ def sync_customers():
 
     # Create summary log
     summary = {
-        "total_priority_customers_processed": len(priority_customers),
+        "total_priority_customers_processed": len(all_priority_customers),
         "total_priority_customers_in_system": len(all_priority_customers),
         "customers_updated_by_id": {
             "count": len(customers_updated_by_id),

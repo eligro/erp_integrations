@@ -287,8 +287,6 @@ def sync_customers():
         if customer_name:
             atera_customer_name_map[customer_name] = customer['CustomerID']
 
-    log_json("INFO", f"Atera customers by ID", {"atera_customer_id_map": atera_customer_id_map})
-
     # Track customer sync actions for summary log
     customers_updated_by_id = []
     customers_updated_by_name = []
@@ -302,8 +300,6 @@ def sync_customers():
     for customer in all_priority_customers:
         priority_customer_number = customer['CUSTNAME']
         priority_customer_name = customer.get('CUSTDES', '').strip().lower()
-
-        log_json("INFO", f"Processing Priority customer", {"CUSTNAME": priority_customer_number, "CUSTDES": priority_customer_name})
 
         # Parse customer's last update date
         udate_str = customer.get('MARH_UDATE', '')
@@ -326,7 +322,7 @@ def sync_customers():
         if customer_id:
             # Customer exists in both systems by ID
             if needs_update:
-                log_json("INFO", f"Found matching customer in Atera by ID. Updating customer.", {"CUSTDES": customer['CUSTDES'], "CustomerID": customer_id})
+                log_json("INFO", f"Updating customer in Atera.", {"CUSTDES": customer['CUSTDES'], "CustomerID": customer_id})
                 update_atera_customer(customer_id, customer)
                 customers_updated_by_id.append({
                     "priority_id": priority_customer_number,
@@ -348,7 +344,7 @@ def sync_customers():
             if customer_id:
                 # Customer exists in Atera by name
                 if needs_update:
-                    log_json("INFO", f"Found matching customer in Atera by name. Updating customer.", {"CUSTDES": customer['CUSTDES'], "CustomerID": customer_id})
+                    log_json("INFO", f"Updating customer in Atera by name match.", {"CUSTDES": customer['CUSTDES'], "CustomerID": customer_id})
                     update_atera_customer(customer_id, customer)
                     customers_updated_by_name.append({
                         "priority_id": priority_customer_number,
@@ -372,7 +368,7 @@ def sync_customers():
                     "last_update": udate_str
                 })
                 # Create it regardless of update date since it's missing
-                log_json("INFO", f"No matching customer found in Atera. Creating customer.", {"CUSTDES": customer['CUSTDES']})
+                log_json("INFO", f"Creating new customer in Atera.", {"CUSTDES": customer['CUSTDES']})
                 result = create_atera_customer(customer)
                 log_json("INFO", f"Customer created in Atera.", {"CUSTDES": customer['CUSTDES'], "ActionID": result['ActionID']})
                 customers_created.append({

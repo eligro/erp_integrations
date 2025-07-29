@@ -8,7 +8,16 @@
       "Bash(git checkout:*)",
       "Bash(git push:*)",
       "Bash(gh pr view:*)",
-      "Bash(gh pr diff:*)"
+      "Bash(gh pr diff:*)",
+      "Bash(gh issue:*)",
+      "Bash(mkdir:*)",
+      "Bash(pip3 install:*)",
+      "Bash(source:*)",
+      "Bash(pip install:*)",
+      "Bash(pytest:*)",
+      "Bash(gh pr create:*)",
+      "Bash(git reset:*)",
+      "Bash(mv:*)"
     ],
     "deny": []
   }

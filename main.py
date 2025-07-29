@@ -54,13 +54,18 @@ PRIORITY_API_PASSWORD = config.get('PRIORITY_API_PASSWORD')
 ATERA_API_KEY = config.get('ATERA_API_KEY')
 
 # Sync flags
-# Convert to bool from string
-SYNC_CUSTOMERS = bool(int(config.get('SYNC_CUSTOMERS', 0)))
-SYNC_CONTACTS = bool(int(config.get('SYNC_CONTACTS', 0)))
-SYNC_CONTRACTS = bool(int(config.get('SYNC_CONTRACTS', 0)))
-SYNC_SERVICE_CALLS = bool(int(config.get('SYNC_SERVICE_CALLS', 0)))
-# DELETE_ALL_CUSTOMERS = bool(int(config.get('DELETE_ALL_CUSTOMERS', 0)))
-SYNC_TICKETS = bool(int(config.get('SYNC_TICKETS', 0)))  # New sync option
+# Convert to bool from string (handles both 'true'/'false' and '1'/'0')
+def parse_bool(value):
+    if isinstance(value, str):
+        return value.lower() in ('true', '1', 'yes', 'on')
+    return bool(value)
+
+SYNC_CUSTOMERS = parse_bool(config.get('SYNC_CUSTOMERS', False))
+SYNC_CONTACTS = parse_bool(config.get('SYNC_CONTACTS', False))
+SYNC_CONTRACTS = parse_bool(config.get('SYNC_CONTRACTS', False))
+SYNC_SERVICE_CALLS = parse_bool(config.get('SYNC_SERVICE_CALLS', False))
+# DELETE_ALL_CUSTOMERS = parse_bool(config.get('DELETE_ALL_CUSTOMERS', False))
+SYNC_TICKETS = parse_bool(config.get('SYNC_TICKETS', False))  # New sync option
 DAYS_BACK_TICKETS = int(config.get('DAYS_BACK_TICKETS', 2))  # Days back to fetch tickets
 PULL_PERIOD_DAYS = int(config.get('PULL_PERIOD_DAYS', 2))
 

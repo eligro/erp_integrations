@@ -262,8 +262,13 @@ def update_atera_custom_field(customer_id, field_name, value):
 
 def sync_customers():
     """Sync customers from Priority to Atera, performing upsert based on IDs and names."""
-    priority_customers = get_priority_customers()
+    # Get ALL Priority customers first to check existence
+    all_priority_customers = get_priority_customers(filter_by_date=False)
     atera_customers = get_atera_customers()
+    
+    # Prepare CSV file for customer state logging
+    csv_filename = 'customers_sync_state.csv'
+    csv_rows = []
 
     # Build mappings:
     # - By 'Priority Customer Number' (ID)
@@ -288,39 +293,85 @@ def sync_customers():
     customers_updated_by_id = []
     customers_updated_by_name = []
     customers_created = []
+    customers_skipped_by_date = []
+    customers_missing_in_atera = []
+    
+    # Determine cutoff date for updates
+    cutoff = datetime.utcnow() - timedelta(days=CUSTOMERS_PULL_PERIOD_DAYS)
 
-    for customer in priority_customers:
+    for customer in all_priority_customers:
         priority_customer_number = customer['CUSTNAME']
         priority_customer_name = customer.get('CUSTDES', '').strip().lower()
 
         log_json("INFO", f"Processing Priority customer", {"CUSTNAME": priority_customer_number, "CUSTDES": priority_customer_name})
 
+        # Parse customer's last update date
+        udate_str = customer.get('MARH_UDATE', '')
+        needs_update = True
+        if udate_str:
+            try:
+                if '+' in udate_str:
+                    udate_str = udate_str.split('+')[0]
+                elif 'Z' in udate_str:
+                    udate_str = udate_str.replace('Z', '')
+                cust_udate = datetime.fromisoformat(udate_str)
+                needs_update = cust_udate >= cutoff
+            except Exception as e:
+                log_json("ERROR", "Error parsing MARH_UDATE", {"exception": str(e), "customer": customer})
+                needs_update = False
+        
         # Try to find the customer in Atera by Priority Customer Number (ID)
         customer_id = atera_customer_id_map.get(priority_customer_number)
-
+        
         if customer_id:
-            # Customer exists in both systems by ID, perform an update
-            log_json("INFO", f"Found matching customer in Atera by ID. Updating customer.", {"CUSTDES": customer['CUSTDES'], "CustomerID": customer_id})
-            update_atera_customer(customer_id, customer)
-            customers_updated_by_id.append({
-                "priority_id": priority_customer_number,
-                "atera_id": customer_id,
-                "name": customer['CUSTDES']
-            })
-        else:
-            # Try to find the customer in Atera by name
-            customer_id = atera_customer_name_map.get(priority_customer_name)
-            if customer_id:
-                # Customer exists in Atera by name, perform an update and set the Priority Customer Number
-                log_json("INFO", f"Found matching customer in Atera by name. Updating customer.", {"CUSTDES": customer['CUSTDES'], "CustomerID": customer_id})
+            # Customer exists in both systems by ID
+            if needs_update:
+                log_json("INFO", f"Found matching customer in Atera by ID. Updating customer.", {"CUSTDES": customer['CUSTDES'], "CustomerID": customer_id})
                 update_atera_customer(customer_id, customer)
-                customers_updated_by_name.append({
+                customers_updated_by_id.append({
                     "priority_id": priority_customer_number,
                     "atera_id": customer_id,
                     "name": customer['CUSTDES']
                 })
+                csv_rows.append([priority_customer_number, customer['CUSTDES'], udate_str, 'updated_by_id', customer_id])
             else:
-                # Customer does not exist in Atera, create it
+                customers_skipped_by_date.append({
+                    "priority_id": priority_customer_number,
+                    "atera_id": customer_id,
+                    "name": customer['CUSTDES'],
+                    "last_update": udate_str
+                })
+                csv_rows.append([priority_customer_number, customer['CUSTDES'], udate_str, 'exists_no_update', customer_id])
+        else:
+            # Try to find the customer in Atera by name
+            customer_id = atera_customer_name_map.get(priority_customer_name)
+            if customer_id:
+                # Customer exists in Atera by name
+                if needs_update:
+                    log_json("INFO", f"Found matching customer in Atera by name. Updating customer.", {"CUSTDES": customer['CUSTDES'], "CustomerID": customer_id})
+                    update_atera_customer(customer_id, customer)
+                    customers_updated_by_name.append({
+                        "priority_id": priority_customer_number,
+                        "atera_id": customer_id,
+                        "name": customer['CUSTDES']
+                    })
+                    csv_rows.append([priority_customer_number, customer['CUSTDES'], udate_str, 'updated_by_name', customer_id])
+                else:
+                    customers_skipped_by_date.append({
+                        "priority_id": priority_customer_number,
+                        "atera_id": customer_id,
+                        "name": customer['CUSTDES'],
+                        "last_update": udate_str
+                    })
+                    csv_rows.append([priority_customer_number, customer['CUSTDES'], udate_str, 'exists_no_update', customer_id])
+            else:
+                # Customer does not exist in Atera
+                customers_missing_in_atera.append({
+                    "priority_id": priority_customer_number,
+                    "name": customer['CUSTDES'],
+                    "last_update": udate_str
+                })
+                # Create it regardless of update date since it's missing
                 log_json("INFO", f"No matching customer found in Atera. Creating customer.", {"CUSTDES": customer['CUSTDES']})
                 result = create_atera_customer(customer)
                 log_json("INFO", f"Customer created in Atera.", {"CUSTDES": customer['CUSTDES'], "ActionID": result['ActionID']})
@@ -328,19 +379,15 @@ def sync_customers():
                     "priority_id": priority_customer_number,
                     "name": customer['CUSTDES']
                 })
+                csv_rows.append([priority_customer_number, customer['CUSTDES'], udate_str, 'created', result['ActionID']])
 
-    # Get all Priority customers to find those filtered by date
-    all_priority_customers = get_priority_customers(filter_by_date=False)
-    priority_ids_processed = {c['CUSTNAME'] for c in priority_customers}
-    customers_filtered_by_date = []
+    # Write CSV file
+    with open(csv_filename, 'w', newline='', encoding='utf-8') as csvfile:
+        writer = csv.writer(csvfile)
+        writer.writerow(['priority_id', 'name', 'last_update', 'state', 'atera_id'])
+        writer.writerows(csv_rows)
     
-    for customer in all_priority_customers:
-        if customer['CUSTNAME'] not in priority_ids_processed:
-            customers_filtered_by_date.append({
-                "priority_id": customer['CUSTNAME'],
-                "name": customer.get('CUSTDES', ''),
-                "last_update": customer.get('MARH_UDATE', '')
-            })
+    log_json("INFO", f"Customer sync state written to {csv_filename}", {"total_rows": len(csv_rows)})
 
     # Create summary log
     summary = {
@@ -358,11 +405,17 @@ def sync_customers():
             "count": len(customers_created),
             "customers": customers_created
         },
-        "customers_filtered_by_date": {
-            "count": len(customers_filtered_by_date),
-            "info": f"Not processed because not updated in last {CUSTOMERS_PULL_PERIOD_DAYS} days",
-            "customers": customers_filtered_by_date[:100] if len(customers_filtered_by_date) > 100 else customers_filtered_by_date,
-            "note": "Showing first 100 only" if len(customers_filtered_by_date) > 100 else "Showing all"
+        "customers_skipped_by_date": {
+            "count": len(customers_skipped_by_date),
+            "info": f"Already exist in Atera but not updated in last {CUSTOMERS_PULL_PERIOD_DAYS} days",
+            "customers": customers_skipped_by_date[:100] if len(customers_skipped_by_date) > 100 else customers_skipped_by_date,
+            "note": "Showing first 100 only" if len(customers_skipped_by_date) > 100 else "Showing all"
+        },
+        "customers_missing_in_atera": {
+            "count": len(customers_missing_in_atera),
+            "info": "Were missing in Atera and have been created",
+            "customers": customers_missing_in_atera[:100] if len(customers_missing_in_atera) > 100 else customers_missing_in_atera,
+            "note": "Showing first 100 only" if len(customers_missing_in_atera) > 100 else "Showing all"
         }
     }
     

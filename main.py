@@ -287,12 +287,11 @@ def sync_customers():
         if customer_name:
             atera_customer_name_map[customer_name] = customer['CustomerID']
 
-    # Track customer sync actions for summary log
-    customers_updated_by_id = []
-    customers_updated_by_name = []
-    customers_created = []
-    customers_skipped_by_date = []
-    customers_missing_in_atera = []
+    # Track customer sync counts for summary log
+    count_updated_by_id = 0
+    count_updated_by_name = 0
+    count_created = 0
+    count_skipped_by_date = 0
     
     # Determine cutoff date for updates
     cutoff = datetime.utcnow() - timedelta(days=CUSTOMERS_PULL_PERIOD_DAYS)
@@ -324,19 +323,10 @@ def sync_customers():
             if needs_update:
                 log_json("INFO", f"Updating customer in Atera.", {"CUSTDES": customer['CUSTDES'], "CustomerID": customer_id})
                 update_atera_customer(customer_id, customer)
-                customers_updated_by_id.append({
-                    "priority_id": priority_customer_number,
-                    "atera_id": customer_id,
-                    "name": customer['CUSTDES']
-                })
+                count_updated_by_id += 1
                 csv_rows.append([priority_customer_number, customer['CUSTDES'], udate_str, 'updated_by_id', customer_id])
             else:
-                customers_skipped_by_date.append({
-                    "priority_id": priority_customer_number,
-                    "atera_id": customer_id,
-                    "name": customer['CUSTDES'],
-                    "last_update": udate_str
-                })
+                count_skipped_by_date += 1
                 csv_rows.append([priority_customer_number, customer['CUSTDES'], udate_str, 'exists_no_update', customer_id])
         else:
             # Try to find the customer in Atera by name
@@ -346,35 +336,17 @@ def sync_customers():
                 if needs_update:
                     log_json("INFO", f"Updating customer in Atera by name match.", {"CUSTDES": customer['CUSTDES'], "CustomerID": customer_id})
                     update_atera_customer(customer_id, customer)
-                    customers_updated_by_name.append({
-                        "priority_id": priority_customer_number,
-                        "atera_id": customer_id,
-                        "name": customer['CUSTDES']
-                    })
+                    count_updated_by_name += 1
                     csv_rows.append([priority_customer_number, customer['CUSTDES'], udate_str, 'updated_by_name', customer_id])
                 else:
-                    customers_skipped_by_date.append({
-                        "priority_id": priority_customer_number,
-                        "atera_id": customer_id,
-                        "name": customer['CUSTDES'],
-                        "last_update": udate_str
-                    })
+                    count_skipped_by_date += 1
                     csv_rows.append([priority_customer_number, customer['CUSTDES'], udate_str, 'exists_no_update', customer_id])
             else:
-                # Customer does not exist in Atera
-                customers_missing_in_atera.append({
-                    "priority_id": priority_customer_number,
-                    "name": customer['CUSTDES'],
-                    "last_update": udate_str
-                })
-                # Create it regardless of update date since it's missing
+                # Customer does not exist in Atera - create it regardless of update date
                 log_json("INFO", f"Creating new customer in Atera.", {"CUSTDES": customer['CUSTDES']})
                 result = create_atera_customer(customer)
                 log_json("INFO", f"Customer created in Atera.", {"CUSTDES": customer['CUSTDES'], "ActionID": result['ActionID']})
-                customers_created.append({
-                    "priority_id": priority_customer_number,
-                    "name": customer['CUSTDES']
-                })
+                count_created += 1
                 csv_rows.append([priority_customer_number, customer['CUSTDES'], udate_str, 'created', result['ActionID']])
 
     # Write CSV file
@@ -385,34 +357,14 @@ def sync_customers():
     
     log_json("INFO", f"Customer sync state written to {csv_filename}", {"total_rows": len(csv_rows)})
 
-    # Create summary log
+    # Create summary log with counts only
     summary = {
         "total_priority_customers_processed": len(all_priority_customers),
-        "total_priority_customers_in_system": len(all_priority_customers),
-        "customers_updated_by_id": {
-            "count": len(customers_updated_by_id),
-            "customers": customers_updated_by_id
-        },
-        "customers_updated_by_name": {
-            "count": len(customers_updated_by_name),
-            "customers": customers_updated_by_name
-        },
-        "customers_created": {
-            "count": len(customers_created),
-            "customers": customers_created
-        },
-        "customers_skipped_by_date": {
-            "count": len(customers_skipped_by_date),
-            "info": f"Already exist in Atera but not updated in last {CUSTOMERS_PULL_PERIOD_DAYS} days",
-            "customers": customers_skipped_by_date[:100] if len(customers_skipped_by_date) > 100 else customers_skipped_by_date,
-            "note": "Showing first 100 only" if len(customers_skipped_by_date) > 100 else "Showing all"
-        },
-        "customers_missing_in_atera": {
-            "count": len(customers_missing_in_atera),
-            "info": "Were missing in Atera and have been created",
-            "customers": customers_missing_in_atera[:100] if len(customers_missing_in_atera) > 100 else customers_missing_in_atera,
-            "note": "Showing first 100 only" if len(customers_missing_in_atera) > 100 else "Showing all"
-        }
+        "customers_updated_by_id": count_updated_by_id,
+        "customers_updated_by_name": count_updated_by_name,
+        "customers_created": count_created,
+        "customers_skipped_not_recently_updated": count_skipped_by_date,
+        "csv_file": csv_filename
     }
     
     log_json("INFO", "Customer sync summary", summary)
